@@ -11,14 +11,20 @@
 #include <Fonts/FreeMono9pt7b.h>
 #include <Fonts/DejaVu_Sans_Mono_14.h>
 #include <HX711_ADC.h>
+#include "FlashStore.h"
+#include <functional>
+#include "loadcell.h"
 
-void calibrate(HX711_ADC& LoadCell) {
+void calibrate(HX711_ADC& LoadCell, DisplayCallback display) {
   Serial.println("***");
   Serial.println("Start calibration:");
   Serial.println("Place the load cell an a level stable surface.");
   Serial.println("Remove any load applied to the load cell.");
   Serial.println("Send 't' from serial monitor to set the tare offset.");
-
+  display("Starting\r\nCalib.");
+  delay(1000);
+  display("Empty Scale\r\nPress Ok");
+  
   boolean _resume = false;
   while (_resume == false) {
     LoadCell.update();
@@ -134,7 +140,7 @@ void changeSavedCalFactor(HX711_ADC& LoadCell) {
   Serial.println("***");
 }
 
-void SetupLoadCell(HX711_ADC& LoadCell)
+bool SetupLoadCell(HX711_ADC& LoadCell, String& message)
 {
   LoadCell.begin();
   //LoadCell.setReverseOutput(); //uncomment to turn a negative output value to positive
@@ -143,12 +149,26 @@ void SetupLoadCell(HX711_ADC& LoadCell)
   LoadCell.start(stabilizingtime, _tare);
   if (LoadCell.getTareTimeoutFlag() || LoadCell.getSignalTimeoutFlag()) {
     Serial.println("Timeout, check MCU>HX711 wiring and pin designations");
-    while (1);
+    message = "ERROR:\r\nLoad Cell Wiring?";
+    return false;
+    //while (1);
   }
   else {
-    LoadCell.setCalFactor(1.0); // user set calibration value (float), initial value 1.0 may be used for this sketch
+    int calfactor = 1.0;
+    if (settings.valid) calfactor = settings.calibrationValue;
+    LoadCell.setCalFactor(calfactor); // user set calibration value (float), initial value 1.0 may be used for this sketch
     Serial.println("Startup is complete");
+    while (!LoadCell.update());
+    if (! settings.valid)
+    {
+        message = "No Calib.\r\nStored";
+     //   calibrate(LoadCell); //start calibration procedure if nothing stored
+    }
+    else
+    {
+        message = "Loaded Calib.";
+    }
+    Serial.println(message);
   }
-  while (!LoadCell.update());
-  calibrate(LoadCell); //start calibration procedure
+  return true;
 }

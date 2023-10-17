@@ -14,6 +14,20 @@ void SetupDisplay(Adafruit_SSD1306& display)
   display.display();
 }
 
+void DisplayMessage(Adafruit_SSD1306& display, String message, int pause)
+{
+    display.clearDisplay();
+    display.setTextSize(1);
+    display.setFont(&FreeMono9pt7b);
+    display.setTextColor(SSD1306_WHITE); // Draw white text
+    display.setTextWrap(true);
+    display.setCursor(0, 12);     // Start at top-left corner
+      //char weightStr[1024];
+    display.print(message.c_str());
+    display.display();
+    if (pause != 0) delay(pause);
+}
+
 void DisplayWeight(Adafruit_SSD1306& display, Chrono fortimer, float weight)
 {
   display.clearDisplay();

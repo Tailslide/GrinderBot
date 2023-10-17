@@ -1,6 +1,6 @@
 #pragma once
 #include <HX711_ADC.h>
-
+#include <functional>
 //HX711 pins:
 
 //const int HX711_dout = 11; //mcu > HX711 dout pin
@@ -10,7 +10,9 @@ const int HX711_sck = 7; //mcu > HX711 sck pin
 #define SCREEN_WIDTH 128 // OLED display width, in pixels
 #define SCREEN_HEIGHT 32 // OLED display height, in pixels
 
+// Define the callback type as a typedef for convenience
+typedef std::function<void(const char*)> DisplayCallback;
 
-void SetupLoadCell(HX711_ADC& LoadCell);
-void calibrate(HX711_ADC& LoadCell);
+bool SetupLoadCell(HX711_ADC& LoadCell, String& message );
+void calibrate(HX711_ADC& LoadCell, DisplayCallback);
 void changeSavedCalFactor(HX711_ADC& LoadCell);

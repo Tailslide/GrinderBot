@@ -17,3 +17,4 @@
 
 void SetupDisplay(Adafruit_SSD1306& display);
 void DisplayWeight(Adafruit_SSD1306& display, Chrono fortimer, float weight);
+void DisplayMessage(Adafruit_SSD1306& display, String message, int pause=0);
