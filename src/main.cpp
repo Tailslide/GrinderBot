@@ -11,7 +11,7 @@
 #define _PWM_LOGLEVEL_       1
 
 #include "SAMD_PWM.h"
-
+#include <Servo.h>
 
 // Not OK for Nano_33_IoT (0, 1, 7, 8, 13, 14, 15 )
 // OK for Nano_33_IoT (2, 3, 4, 5, 6, 9, 10, 11, 12, 16, 17)
@@ -28,6 +28,8 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 Chrono timer(Chrono::SECONDS);
 //creates pwm instance
 SAMD_PWM* PWM_Instance;
+Servo myservo;  // create servo object to control a servo
+int pos = 0;    // variable to store the servo position
 
 float frequency = 0.0f;
 
@@ -38,6 +40,7 @@ const int button1Pin = 0;  // Pin number to read from
 const int button2Pin = 1;  // Pin number to read from
 const int button3Pin = 2;  // Pin number to read from
 const int button4Pin = 3;  // Pin number to read from
+const int servoPin = 4;
 const int buzzerPin = 5;
 // Define a function to handle displaying strings to the Serial Monitor
 void ScreenDisplay(const char* message) {
@@ -67,6 +70,8 @@ void setup() {
 
   //assigns PWM frequency of 1.0 KHz and a duty cycle of 0%
   PWM_Instance = new SAMD_PWM(buzzerPin, frequency, dutyCycle);
+  myservo.attach(servoPin,0,45);
+  myservo.write(0);  
   Serial.println("Started");
 }
 void soundoff()
@@ -109,6 +114,20 @@ void loop() {
     {
       Serial.println("Sound off");
       soundoff();
+
+      for (pos = 0; pos <= 45; pos += 1) { // goes from 0 degrees to 180 degrees
+        // in steps of 1 degree
+        myservo.write(pos);              // tell servo to go to position in variable 'pos'
+        delay(15);                       // waits 15ms for the servo to reach the position
+      }
+      delay(5000);
+      pos = 0;
+      myservo.write(pos);
+      // for (pos = 180; pos >= 0; pos -= 1) { // goes from 180 degrees to 0 degrees
+      //   myservo.write(pos);              // tell servo to go to position in variable 'pos'
+      //   delay(15);                       // waits 15ms for the servo to reach the position
+      // }
+
 
     }
     //Serial.println("Pin is LOW");
