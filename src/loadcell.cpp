@@ -12,8 +12,7 @@
 // (Uploading new firmware still wipes it; see DEFAULT_CAL_FACTOR.)
 void saveCalFactor(float calFactor) {
   settings.calibrationValue = calFactor;
-  settings.valid = true;
-  flash_store.write(settings);
+  SaveSettings();
 }
 
 void calibrate(HX711_ADC& LoadCell, DisplayCallback display) {
@@ -147,12 +146,14 @@ bool SetupLoadCell(HX711_ADC& LoadCell, String& message)
   }
   else {
     // Use the saved factor if there is one, otherwise the default from loadcell.h.
-    // (float, not int: an int would cut off the decimals of the factor)
-    float calFactor = settings.valid ? settings.calibrationValue : DEFAULT_CAL_FACTOR;
+    // (float, not int: an int would cut off the decimals of the factor.)
+    // A 0 factor means only other settings were saved, so it isn't a calibration.
+    bool haveSavedCal = settings.valid && settings.calibrationValue != 0.0f;
+    float calFactor = haveSavedCal ? settings.calibrationValue : DEFAULT_CAL_FACTOR;
     LoadCell.setCalFactor(calFactor);
     Serial.println("Startup is complete");
     while (!LoadCell.update());
-    if (settings.valid)
+    if (haveSavedCal)
     {
         message = "Loaded Calib.";
     }

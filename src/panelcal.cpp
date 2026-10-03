@@ -7,6 +7,7 @@
 #include "display.h"
 #include "loadcell.h"
 #include "FlashStore.h"
+#include "ui.h"
 
 namespace {
 
