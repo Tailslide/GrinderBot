@@ -3,17 +3,18 @@
 **/
 
 #include <Arduino.h>
-#include <SPI.h>
-#include <Wire.h>
-#include <Chrono.h>
-#include <Adafruit_GFX.h>
-#include <Adafruit_SSD1306.h>
-#include <Fonts/FreeMono9pt7b.h>
-#include <Fonts/DejaVu_Sans_Mono_14.h>
 #include <HX711_ADC.h>
 #include "FlashStore.h"
 #include <functional>
 #include "loadcell.h"
+
+// Save the calibration factor to flash so it survives a power cycle.
+// (Uploading new firmware still wipes it; see DEFAULT_CAL_FACTOR.)
+void saveCalFactor(float calFactor) {
+  settings.calibrationValue = calFactor;
+  settings.valid = true;
+  flash_store.write(settings);
+}
 
 void calibrate(HX711_ADC& LoadCell, DisplayCallback display) {
   Serial.println("***");
@@ -61,28 +62,23 @@ void calibrate(HX711_ADC& LoadCell, DisplayCallback display) {
   float newCalibrationValue = LoadCell.getNewCalibration(known_mass); //get the new calibration value
 
   Serial.print("New calibration value has been set to: ");
-  Serial.print(newCalibrationValue);
-  Serial.println(", use this as calibration value (calFactor) in your project sketch.");
-  Serial.print("Save this value to EEPROM adress ");
-  //Serial.print(calVal_eepromAdress);
-  Serial.println("? y/n");
+  Serial.print(newCalibrationValue, 4);
+  Serial.println(", also put this in DEFAULT_CAL_FACTOR (loadcell.h) so it survives firmware uploads.");
+  Serial.println("Save this value to flash? y/n");
 
   _resume = false;
   while (_resume == false) {
     if (Serial.available() > 0) {
       char inByte = Serial.read();
       if (inByte == 'y') {
-        //EEPROM.put(calVal_eepromAdress, newCalibrationValue);
-        //EEPROM.get(calVal_eepromAdress, newCalibrationValue);
+        saveCalFactor(newCalibrationValue);
         Serial.print("Value ");
-        Serial.print(newCalibrationValue);
-        Serial.print(" saved to EEPROM address: ");
-        //Serial.println(calVal_eepromAdress);
+        Serial.print(newCalibrationValue, 4);
+        Serial.println(" saved to flash");
         _resume = true;
-
       }
       else if (inByte == 'n') {
-        Serial.println("Value not saved to EEPROM");
+        Serial.println("Value not saved to flash");
         _resume = true;
       }
     }
@@ -115,23 +111,19 @@ void changeSavedCalFactor(HX711_ADC& LoadCell) {
     }
   }
   _resume = false;
-  Serial.print("Save this value to EEPROM adress ");
-  //Serial.print(calVal_eepromAdress);
-  Serial.println("? y/n");
+  Serial.println("Save this value to flash? y/n");
   while (_resume == false) {
     if (Serial.available() > 0) {
       char inByte = Serial.read();
       if (inByte == 'y') {
-        //EEPROM.put(calVal_eepromAdress, newCalibrationValue);
-        //EEPROM.get(calVal_eepromAdress, newCalibrationValue);
+        saveCalFactor(newCalibrationValue);
         Serial.print("Value ");
-        Serial.print(newCalibrationValue);
-        Serial.print(" saved to EEPROM address: ");
-        //Serial.println(calVal_eepromAdress);
+        Serial.print(newCalibrationValue, 4);
+        Serial.println(" saved to flash");
         _resume = true;
       }
       else if (inByte == 'n') {
-        Serial.println("Value not saved to EEPROM");
+        Serial.println("Value not saved to flash");
         _resume = true;
       }
     }
@@ -154,21 +146,28 @@ bool SetupLoadCell(HX711_ADC& LoadCell, String& message)
     //while (1);
   }
   else {
-    int calfactor = 1.0;
-    if (settings.valid) calfactor = settings.calibrationValue;
-    LoadCell.setCalFactor(calfactor); // user set calibration value (float), initial value 1.0 may be used for this sketch
+    // Use the saved factor if there is one, otherwise the default from loadcell.h.
+    // (float, not int: an int would cut off the decimals of the factor)
+    float calFactor = settings.valid ? settings.calibrationValue : DEFAULT_CAL_FACTOR;
+    LoadCell.setCalFactor(calFactor);
     Serial.println("Startup is complete");
     while (!LoadCell.update());
-    if (! settings.valid)
-    {
-        message = "No Calib.\r\nStored";
-     //   calibrate(LoadCell); //start calibration procedure if nothing stored
-    }
-    else
+    if (settings.valid)
     {
         message = "Loaded Calib.";
     }
-    Serial.println(message);
+    else if (DEFAULT_CAL_FACTOR != 1.0f)
+    {
+        message = "Default Calib.";
+    }
+    else
+    {
+        message = "No Calib.\r\nStored";
+    }
+    Serial.print(message);
+    Serial.print(" (factor ");
+    Serial.print(calFactor, 4);
+    Serial.println(")");
   }
   return true;
 }

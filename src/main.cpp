@@ -1,168 +1,125 @@
 /**************************************************************************
- Arduino Scale
+ GrinderBot - coffee grinder scale
  **************************************************************************/
 #include <Arduino.h>
-#include <SPI.h>
 #include <Wire.h>
 #include <Chrono.h>
+#include <Servo.h>
 #include "loadcell.h"
 #include "display.h"
 #include "FlashStore.h"
-#define _PWM_LOGLEVEL_       1
-
-#include "SAMD_PWM.h"
-#include <Servo.h>
-
-// Not OK for Nano_33_IoT (0, 1, 7, 8, 13, 14, 15 )
-// OK for Nano_33_IoT (2, 3, 4, 5, 6, 9, 10, 11, 12, 16, 17)
-// TCC OK => pin 4, 5, 6, 8, 9, 10, 11, 16/A2, 17/A3
-// TC OK  => pin 12
-// For ITSYBITSY_M4
-// 16-bit Higher accuracy, Lower Frequency, PWM Pin OK: TCCx: 0-2, 4, 5, 7, 9-13
-//  8-bit Lower  accuracy, Hi Frequency,    PWM Pin OK: TCx: 18-20, 24-25
-
-//#define pinToUse       11
 
 HX711_ADC LoadCell(HX711_dout, HX711_sck);
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 Chrono timer(Chrono::SECONDS);
-//creates pwm instance
-SAMD_PWM* PWM_Instance;
-Servo myservo;  // create servo object to control a servo
-int pos = 0;    // variable to store the servo position
+Servo grinderServo;
 
-float frequency = 0.0f;
-
-float dutyCycle = 0.00f;
-
-uint8_t channel = 0;
-const int button1Pin = 0;  // Pin number to read from
-const int button2Pin = 1;  // Pin number to read from
-const int button3Pin = 2;  // Pin number to read from
-const int button4Pin = 3;  // Pin number to read from
+// Touch pads (TTP223 boards: output is HIGH while the pad is touched)
+const int menuPin = 0;  // ≡
+const int upPin = 1;    // 1 ▲
+const int downPin = 2;  // 2 ▼
+const int okPin = 3;    // OK
 const int servoPin = 4;
 const int buzzerPin = 5;
-// Define a function to handle displaying strings to the Serial Monitor
+
+// Servo pulse widths in microseconds.
+// These are the exact pulses the earlier attach(servoPin, 0, 45) produced for
+// write(0) and write(45). The Servo library reads attach()'s min/max as pulse
+// widths in microseconds (not degrees), and 0/45 overflowed its internal
+// limits to a 1024-2096 us range. Keeping the same pulses keeps the arm moving
+// exactly as it did in the test.
+const int SERVO_REST_US = 1024;   // arm clear of the manual button
+const int SERVO_PRESS_US = 1292;  // arm holding the manual button down
+const int SERVO_STEP_US = 6;      // ~1 degree per step, like the original sweep
+
+const unsigned int BEEP_HZ = 3000;
+const unsigned long BEEP_MS = 50;
+const unsigned long DISPLAY_INTERVAL_MS = 150;
+
+// Show calibration prompts on the screen
 void ScreenDisplay(const char* message) {
-  DisplayMessage(display,message);
+  DisplayMessage(display, message);
+}
+
+// Non-blocking beep. tone() runs on timer TC5; the Servo library uses TC4,
+// so the two don't interfere.
+void beep() {
+  tone(buzzerPin, BEEP_HZ, BEEP_MS);
+}
+
+// Temporary test from commit 1ec3ed7: slowly press the manual button, hold it
+// for 5 s, then release. It blocks the loop while running; the grind-by-weight
+// code will replace it.
+void servoPressTest() {
+  for (int us = SERVO_REST_US; us <= SERVO_PRESS_US; us += SERVO_STEP_US) {
+    grinderServo.writeMicroseconds(us);
+    delay(15);
+  }
+  grinderServo.writeMicroseconds(SERVO_PRESS_US);
+  delay(5000);
+  grinderServo.writeMicroseconds(SERVO_REST_US);
 }
 
 void setup() {
-  Serial.begin(9600);  //Serial.begin(57600); 
+  // Park the servo first. Setting the pulse before attach() means the very
+  // first pulse is the rest position; attach() on its own starts at 1500 us,
+  // which is past the press position.
+  grinderServo.writeMicroseconds(SERVO_REST_US);
+  grinderServo.attach(servoPin);
+
+  Serial.begin(9600);
   delay(10);
   Serial.println();
   Serial.println("Starting...");
-  pinMode(button1Pin, INPUT);  // Set the pin as INPUT
-  pinMode(button2Pin, INPUT);  // Set the pin as INPUT
-  pinMode(button3Pin, INPUT);  // Set the pin as INPUT
-  pinMode(button4Pin, INPUT);  // Set the pin as INPUT
+  pinMode(menuPin, INPUT);
+  pinMode(upPin, INPUT);
+  pinMode(downPin, INPUT);
+  pinMode(okPin, INPUT);
   pinMode(buzzerPin, OUTPUT);
   SetupDisplay(display);
   String message;
   SetupLoadCell(LoadCell, message);
-  if (message != "") DisplayMessage(display,message,3000);
+  if (message != "") DisplayMessage(display, message, 3000);
   timer.restart();
-  //if (! settings.valid) calibrate(LoadCell, ScreenDisplay);
-  DisplayWeight(display,timer,0.0f);
-  Serial.print(F("\nStarting PWM_Basic on "));
-  Serial.println(BOARD_NAME);
-  Serial.println(SAMD_PWM_VERSION);
-
-  //assigns PWM frequency of 1.0 KHz and a duty cycle of 0%
-  PWM_Instance = new SAMD_PWM(buzzerPin, frequency, dutyCycle);
-  myservo.attach(servoPin,0,45);
-  myservo.write(0);  
+  DisplayWeight(display, timer, 0.0f);
+  display.display();
   Serial.println("Started");
 }
-void soundoff()
-{
-  // PWM_Instance->setPWM_DCPercentage_manual(buzzerPin, 0.0f);
-  frequency = 0.0f;
-  dutyCycle = 0.0f;
-  PWM_Instance->setPWM(buzzerPin, frequency, dutyCycle);  // freq, duty cycle
-}
-bool playingSound()
-{
-  return  (dutyCycle > 0.0f);
-}
-void beep()
-{
-  frequency = 3000.0f;
-  dutyCycle = 50.0f;
-  PWM_Instance->setPWM(buzzerPin, frequency, dutyCycle);  // freq, duty cycle
-}
 
-unsigned long tScale = 0;
-unsigned long tBeep = 0;
-bool debouncing = false;
+unsigned long tDisplay = 0;
+bool menuWasDown = false;
 
-bool played = false;
 void loop() {
-  static boolean newDataReady = 0;
-  const int serialPrintInterval = 150; //increase value to slow down serial print activity
-  const int beepLen = 50; //increase value to slow down serial print activity
+  static bool newDataReady = false;
 
-  int pinValue = digitalRead(button1Pin);  // Read the value of the pin (HIGH or LOW)
-  
-  if(pinValue == HIGH && !playingSound() && !debouncing) {
-    Serial.println("Pin is HIGH");
-    tBeep = millis();
-    debouncing = true;
+  // Act once per touch of the menu pad (on the press, not while held)
+  bool menuDown = (digitalRead(menuPin) == HIGH);
+  if (menuDown && !menuWasDown) {
+    Serial.println("Menu pad touched");
     beep();
-  } else {
-    if ((millis() > tBeep + beepLen) && playingSound())
-    {
-      Serial.println("Sound off");
-      soundoff();
-
-      for (pos = 0; pos <= 45; pos += 1) { // goes from 0 degrees to 180 degrees
-        // in steps of 1 degree
-        myservo.write(pos);              // tell servo to go to position in variable 'pos'
-        delay(15);                       // waits 15ms for the servo to reach the position
-      }
-      delay(5000);
-      pos = 0;
-      myservo.write(pos);
-      // for (pos = 180; pos >= 0; pos -= 1) { // goes from 180 degrees to 0 degrees
-      //   myservo.write(pos);              // tell servo to go to position in variable 'pos'
-      //   delay(15);                       // waits 15ms for the servo to reach the position
-      // }
-
-
-    }
-    //Serial.println("Pin is LOW");
-    //soundoff();
+    servoPressTest();
   }
-  if (pinValue == LOW)
-  {
-    debouncing = false;
-  }
-
-   //delay(100);  // Delay for 1 second before reading again
-   //Serial.println("got there");
+  menuWasDown = menuDown;
 
   // check for new data/start next conversion:
   if (LoadCell.update()) newDataReady = true;
 
-  // get smoothed value from the dataset:
-  if (newDataReady) {
-    if (millis() > tScale + serialPrintInterval) {
-      float i = LoadCell.getData();
-      //Serial.print("Load_cell output val: ");
-      //Serial.println(i);
-      newDataReady = 0;
-      tScale = millis();
-      DisplayWeight(display, timer,i);
-      display.display();
-   }
+  // get smoothed value from the dataset. Subtracting times (rather than
+  // comparing millis() > t + interval) keeps working when millis() wraps.
+  if (newDataReady && (millis() - tDisplay >= DISPLAY_INTERVAL_MS)) {
+    float weight = LoadCell.getData();
+    newDataReady = false;
+    tDisplay = millis();
+    DisplayWeight(display, timer, weight);
+    display.display();
   }
 
   // receive command from serial terminal
   if (Serial.available() > 0) {
     char inByte = Serial.read();
-    if (inByte == 't') LoadCell.tareNoDelay(); //tare
-    else if (inByte == 'r') calibrate(LoadCell, ScreenDisplay); //calibrate
-    else if (inByte == 'c') changeSavedCalFactor(LoadCell); //edit calibration value manually
+    if (inByte == 't') LoadCell.tareNoDelay();                   // tare
+    else if (inByte == 'r') calibrate(LoadCell, ScreenDisplay);  // calibrate with a known mass
+    else if (inByte == 'c') changeSavedCalFactor(LoadCell);      // type in a calibration factor
   }
 
   // check if last tare operation is complete
@@ -170,10 +127,5 @@ void loop() {
     Serial.println("Tare complete");
   }
 
-  //if (timer.hasPassed(1))
-  //{
-//  UpdateStatus(timer);
-  //display.display();
-//  }
   delay(10);
 }

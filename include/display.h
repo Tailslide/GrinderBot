@@ -2,7 +2,6 @@
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
 #include <Fonts/FreeMono9pt7b.h>
-#include <Fonts/DejaVu_Sans_Mono_14.h>
 #include <Chrono.h>
 
 // Declaration for an SSD1306 display connected to I2C (SDA, SCL pins)
