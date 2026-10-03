@@ -8,6 +8,8 @@
 #include "loadcell.h"
 #include "display.h"
 #include "FlashStore.h"
+#include "pads.h"
+#include "panelcal.h"
 
 HX711_ADC LoadCell(HX711_dout, HX711_sck);
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
@@ -15,10 +17,10 @@ Chrono timer(Chrono::SECONDS);
 Servo grinderServo;
 
 // Touch pads (TTP223 boards: output is HIGH while the pad is touched)
-const int menuPin = 0;  // ≡
-const int upPin = 1;    // 1 ▲
-const int downPin = 2;  // 2 ▼
-const int okPin = 3;    // OK
+Pad menuPad(0);  // ≡   tap: servo test, hold 2 s: calibrate
+Pad upPad(1);    // 1 ▲
+Pad downPad(2);  // 2 ▼
+Pad okPad(3);    // OK
 const int servoPin = 4;
 const int buzzerPin = 5;
 
@@ -71,10 +73,10 @@ void setup() {
   delay(10);
   Serial.println();
   Serial.println("Starting...");
-  pinMode(menuPin, INPUT);
-  pinMode(upPin, INPUT);
-  pinMode(downPin, INPUT);
-  pinMode(okPin, INPUT);
+  menuPad.begin();
+  upPad.begin();
+  downPad.begin();
+  okPad.begin();
   pinMode(buzzerPin, OUTPUT);
   SetupDisplay(display);
   String message;
@@ -87,26 +89,41 @@ void setup() {
 }
 
 unsigned long tDisplay = 0;
-bool menuWasDown = false;
 
 void loop() {
   static bool newDataReady = false;
 
-  // Act once per touch of the menu pad (on the press, not while held)
-  bool menuDown = (digitalRead(menuPin) == HIGH);
-  if (menuDown && !menuWasDown) {
-    Serial.println("Menu pad touched");
-    beep();
-    servoPressTest();
-  }
-  menuWasDown = menuDown;
+  menuPad.update();
+  upPad.update();
+  downPad.update();
+  okPad.update();
 
   // check for new data/start next conversion:
   if (LoadCell.update()) newDataReady = true;
 
-  // get smoothed value from the dataset. Subtracting times (rather than
-  // comparing millis() > t + interval) keeps working when millis() wraps.
-  if (newDataReady && (millis() - tDisplay >= DISPLAY_INTERVAL_MS)) {
+  // check if the last tare operation is complete. getTareStatus() clears the
+  // flag when read, so read it once here and hand it to whoever needs it.
+  bool tareDone = LoadCell.getTareStatus();
+  if (tareDone) Serial.println("Tare complete");
+
+  if (PanelCalActive()) {
+    // Calibration owns the screen and pads until it saves or is cancelled (≡).
+    // A ≡ touch here is a cancel, so it mustn't also run the servo test when
+    // released.
+    bool cancel = menuPad.pressed();
+    if (cancel) menuPad.consume();
+    PanelCalUpdate(LoadCell, display, cancel, upPad.pressed(),
+                   downPad.pressed(), okPad.pressed(), tareDone);
+  } else if (menuPad.longPressed()) {
+    beep();
+    PanelCalStart(LoadCell, display);
+  } else if (menuPad.tapped()) {
+    Serial.println("Menu pad tapped");
+    beep();
+    servoPressTest();
+  } else if (newDataReady && (millis() - tDisplay >= DISPLAY_INTERVAL_MS)) {
+    // get smoothed value from the dataset. Subtracting times (rather than
+    // comparing millis() > t + interval) keeps working when millis() wraps.
     float weight = LoadCell.getData();
     newDataReady = false;
     tDisplay = millis();
@@ -120,11 +137,6 @@ void loop() {
     if (inByte == 't') LoadCell.tareNoDelay();                   // tare
     else if (inByte == 'r') calibrate(LoadCell, ScreenDisplay);  // calibrate with a known mass
     else if (inByte == 'c') changeSavedCalFactor(LoadCell);      // type in a calibration factor
-  }
-
-  // check if last tare operation is complete
-  if (LoadCell.getTareStatus() == true) {
-    Serial.println("Tare complete");
   }
 
   delay(10);

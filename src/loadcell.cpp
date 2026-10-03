@@ -24,7 +24,7 @@ void calibrate(HX711_ADC& LoadCell, DisplayCallback display) {
   Serial.println("Send 't' from serial monitor to set the tare offset.");
   display("Starting\r\nCalib.");
   delay(1000);
-  display("Empty Scale\r\nPress Ok");
+  display("Empty scale\r\nSerial: t");
   
   boolean _resume = false;
   while (_resume == false) {
