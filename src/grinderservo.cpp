@@ -22,6 +22,7 @@ int targetUs = SERVO_DEFAULT_REST_US;   // where the arm is headed
 unsigned long rampStart = 0;
 unsigned long rampMs = 0;
 unsigned long restSince = 0;
+bool savePending = false;
 
 int clampUs(int us) {
   if (us < SERVO_MIN_US) return SERVO_MIN_US;
@@ -44,13 +45,15 @@ void moveTo(int us, unsigned long ms) {
   targetUs = us;
   rampStart = millis();
   rampMs = ms;
-  if (us == restUs) {
-    WatchdogDisarm();
-    restSince = millis();
-  } else {
-    WatchdogArm();
-  }
+  // Pulse first: letting go of the button shouldn't wait on the watchdog's
+  // few-ms register sync
   output(ms == 0 ? us : fromUs);
+  if (us == restUs) {
+    restSince = millis();
+    WatchdogArm(WATCHDOG_IDLE_PERIOD_MS);
+  } else {
+    WatchdogArm(WATCHDOG_PERIOD_MS);
+  }
 }
 
 }  // namespace
@@ -85,6 +88,10 @@ void ServoUpdate() {
     digitalWrite(servoPin, LOW);
     attached = false;
   }
+  if (savePending && !attached) {
+    savePending = false;
+    SaveSettings();
+  }
 }
 
 int ServoRestUs() { return restUs; }
@@ -101,3 +108,4 @@ void ServoWriteUs(int us) { moveTo(us, 0); }
 void ServoRest() { moveTo(restUs, 0); }
 void ServoPress() { moveTo(pressUs, SERVO_PRESS_RAMP_MS); }
 bool ServoAtRest() { return targetUs == restUs && currentUs == restUs; }
+void ServoSaveSettingsAtRest() { savePending = true; }

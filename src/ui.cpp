@@ -47,7 +47,10 @@ void showInfo(Adafruit_SSD1306& display) {
 
 void saveDose1(int tenths) { GrindSetDoseDg(1, tenths); }
 void saveDose2(int tenths) { GrindSetDoseDg(2, tenths); }
-void saveOffset(int tenths) { GrindSetOffsetG(tenths / 10.0f); }
+void saveOffset(int tenths) {
+  // OK without changing it keeps the learned value (finer than 0.1 g)
+  if (tenths != (int)lroundf(GrindOffsetG() * 10.0f)) GrindSetOffsetG(tenths / 10.0f);
+}
 
 void editDose(Adafruit_SSD1306& display, int n) {
   ValueEditStart(display, n == 1 ? "Dose 1" : "Dose 2", GrindDoseDg(n), DOSE_MIN_DG, DOSE_MAX_DG,

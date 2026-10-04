@@ -64,7 +64,7 @@ void setup() {
   delay(10);
   Serial.println();
   Serial.println("Starting...");
-  if (WatchdogCausedLastReset()) Serial.println("Restarted by the watchdog (firmware hung while grinding)");
+  if (WatchdogCausedLastReset()) Serial.println("Restarted by the watchdog (the firmware had hung)");
   Serial.print("Servo rest ");
   Serial.print(ServoRestUs());
   Serial.print(" us, press ");
@@ -89,6 +89,7 @@ void setup() {
   GrindBegin(scaleOk);
   NetBegin();
   lastData = millis();
+  WatchdogArm(WATCHDOG_IDLE_PERIOD_MS);  // short period whenever the servo leaves rest
   Serial.println("Started");
 }
 
@@ -116,7 +117,9 @@ void loop() {
   // Grind logic before the pads, so safety stops never wait on the UI
   if (GrindUpdate(LoadCell, newData, weight, tareDone)) {
     const GrindRecord& r = GrindLastRecord();
-    beepTimes(r.result == GrindResult::Done || r.result == GrindResult::Stopped ? 2 : 3);
+    // Two beeps: done. Three: a safety stop. (A pad stop already beeped.)
+    if (r.result == GrindResult::Done) beepTimes(2);
+    else if (r.result != GrindResult::Stopped) beepTimes(3);
     NetPublishGrind(r);
   }
 
@@ -140,7 +143,8 @@ void loop() {
   // receive command from serial terminal
   if (Serial.available() > 0) {
     char inByte = Serial.read();
-    if (inByte == 't' && !GrindBusy()) GrindZero(LoadCell);  // tare
+    // tare, only from the weight screen (not mid-calibration or servo setup)
+    if (inByte == 't' && !GrindBusy() && UiIdle() && ServoAtRest()) GrindZero(LoadCell);
   }
 
   delay(5);

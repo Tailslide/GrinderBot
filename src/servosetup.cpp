@@ -73,8 +73,8 @@ void ServoSetupUpdate(Adafruit_SSD1306& display, bool cancel, bool up, bool down
       show(display);
     } else {
       ServoSetPositions(restUs, pressUs);
-      SaveSettings();
       ServoRest();
+      ServoSaveSettingsAtRest();  // not while the servo is still being driven
       Serial.print("Servo positions saved: rest ");
       Serial.print(restUs);
       Serial.print(" us, press ");

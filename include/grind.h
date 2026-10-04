@@ -14,8 +14,10 @@
 // and the watchdog (watchdog.h) covers a hung firmware.
 
 // --- Tuning ---
-const int GRIND_SAMPLES = 4;    // HX711_ADC moving average while grinding (~0.6 s tare, less lag)
+const int GRIND_SAMPLES = 4;    // HX711_ADC moving average while grinding (less lag)
 const int IDLE_SAMPLES = 16;    // library default, steadier reading when idle
+const int GRIND_TARE_READINGS = GRIND_SAMPLES + 3;  // fresh readings before zeroing (~0.7 s):
+                                                    //   the average plus the 2 the library drops, +1
 const unsigned long GRIND_TARE_TIMEOUT_MS = 3000;
 const unsigned long GRIND_MAX_MS = 60000;          // never hold the button longer than this
 const unsigned long GRIND_STALL_MS = 5000;         // let go if the weight hasn't risen

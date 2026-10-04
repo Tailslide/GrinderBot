@@ -6,12 +6,12 @@ A scale that sits under a Mazzer Mini Electronic (Type A) and grinds by weight: 
 
 | Pad | On the weight screen | In menus and settings |
 |---|---|---|
-| **OK** | Grind the selected dose (put the cup on first; it tares) | Select / save |
+| **OK** | Grind the selected dose (put the cup on first; it tares, ~0.7 s) | Select / save |
 | **1 ▲** | Tap: dose 1. Hold 2 s: edit dose 1 | Up / more |
 | **2 ▼** | Tap: dose 2. Hold 2 s: edit dose 2 | Down / less |
 | **≡** | Tap: tare. Hold 2 s: menu | Back / cancel |
 
-While grinding, **touching any pad stops it**. The top line shows the dose, then progress, then the result (e.g. `Done 18.1 (+0.1)  14.3s`); the weight is in large digits below. Two beeps mean a grind finished or was stopped; three mean a safety stop.
+While grinding, **touching any pad stops it** (one beep). The top line shows the dose, then progress, then the result (e.g. `Done 18.1 (+0.1)  14.3s`); the weight is in large digits below. Two beeps: the grind is done. Three: a safety stop.
 
 **Menu** (hold ≡): Calibrate · Servo pos · Dose 1 · Dose 2 · Offset · Network.
 
@@ -29,18 +29,18 @@ The servo lets go of the button if:
 - the load cell stops sending readings for 1 s
 - the button has been held 60 s
 
-The SAMD21 watchdog also runs whenever the servo isn't at rest. If the firmware hangs mid-grind, the board resets within 2 s and the servo parks first thing on boot. The limits are constants at the top of `include/grind.h`.
+The SAMD21 watchdog also runs with a 2 s period whenever the servo isn't at rest: if the firmware hangs mid-grind, the board resets and the servo parks first thing on boot. The rest of the time it runs with a 16 s period, which only catches real lock-ups (a wedged Wi-Fi module, an unplugged HX711 mid-calibration). The limits are constants at the top of `include/grind.h`.
 
 ### After uploading new firmware
 
-Uploading wipes the saved settings (FlashStorage lives in the program flash): calibration, servo positions, doses and the learned offset. Put your calibration factor in `DEFAULT_CAL_FACTOR` (`include/loadcell.h`; the panel calibration prints it over serial) so readings stay in grams. Set the servo positions again from the menu.
+Uploading wipes the saved settings (FlashStorage lives in the program flash): calibration, servo positions, doses, the learned offset and the grind count. Put your calibration factor in `DEFAULT_CAL_FACTOR` (`include/loadcell.h`; the panel calibration prints it over serial) so readings stay in grams. Set the servo positions again from the menu.
 
 ## Home Assistant (optional)
 
 1. Copy `include/secrets.example.h` to `include/secrets.h` and fill in your 2.4 GHz Wi-Fi and MQTT broker (e.g. the Mosquitto add-on; use its IP address, since the Wi-Fi module can't resolve `.local` names). `secrets.h` is git-ignored.
-2. Build and upload. A **GrinderBot** device appears in Home Assistant through MQTT discovery, with sensors for last dose, last target, last grind time, grind offset, last result and a grind count. The full record of each grind is in the attributes of *Last dose*, and is published retained to `grinderbot/<id>/grind`.
+2. Build and upload. A **GrinderBot** device appears in Home Assistant through MQTT discovery, with sensors for last dose, last target, last grind time, grind offset, last result and a grind count. Every grind is published retained to `grinderbot/<id>/grind`; grinds that reached the target also go to `grinderbot/<id>/dose`, which feeds the dose, target and time sensors, so stopped or cut-off grinds don't skew their statistics. The full record is in the attributes of *Last dose*.
 
-Without `secrets.h` the firmware is built with no network code at all. With it, network calls only happen when the scale is idle (never while grinding), and a broker that's down just means retries every 15 s up to 5 min. If Wi-Fi connects but MQTT won't, update the Wi-Fi module firmware with the Arduino IDE's firmware updater (serial output shows the version at boot).
+Without `secrets.h` the firmware is built with no network code at all. With it, network calls only happen when the scale is idle (never while grinding), and a broker that's down just means retries every 15 s, backing off to 5 min. A connection attempt to a broker that doesn't answer can freeze the pads for up to ~11 s, so put in the right address. The grind count starts again from 0 after a firmware upload; Home Assistant treats that as a meter reset. If Wi-Fi connects but MQTT won't, update the Wi-Fi module firmware with the Arduino IDE's firmware updater (serial output shows the version at boot).
 
 ## Wiring
 

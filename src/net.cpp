@@ -23,6 +23,7 @@ String NetInfo() { return String("Wi-Fi off\nAdd include/secrets.h\nto log to Ho
 #include <stdarg.h>
 #include <WiFiNINA.h>
 #include <ArduinoMqttClient.h>
+#include "watchdog.h"
 
 namespace {
 
@@ -33,7 +34,9 @@ const unsigned long MQTT_RETRY_MIN_MS = 15000;
 const unsigned long MQTT_RETRY_MAX_MS = 300000;
 const uint16_t TCP_CONNECT_TIMEOUT_MS = 3000;
 const unsigned long MQTT_CONNACK_TIMEOUT_MS = 3000;
-const unsigned long MQTT_KEEPALIVE_MS = 60000;
+// The keep-alive only runs between grinds; brokers drop a client after 1.5x
+// this with no traffic, which has to outlast the longest grind (~70 s)
+const unsigned long MQTT_KEEPALIVE_MS = 150000;
 
 WiFiClient wifiClient;
 MqttClient mqtt(wifiClient);
@@ -85,17 +88,22 @@ class Text {
 };
 
 bool publish(const char* topic, const char* payload, bool retain) {
+  WatchdogFeed();  // each write can wait a couple of seconds on a bad link
   unsigned long n = strlen(payload);
   // Known size, so the library streams it instead of using its 256-byte buffer
   if (!mqtt.beginMessage(topic, n, retain, 0, false)) return false;
-  mqtt.write((const uint8_t*)payload, n);
+  if (mqtt.write((const uint8_t*)payload, n) != n) {
+    mqtt.stop();  // the broker has half a message; start over on reconnect
+    return false;
+  }
   return mqtt.endMessage();
 }
 
 struct Entity {
   const char* key;
   const char* name;
-  const char* field;  // key in the grind JSON
+  const char* topic;  // "grind" (every grind) or "dose" (only grinds that reached the target)
+  const char* field;  // key in the JSON
   const char* unit;
   const char* deviceClass;
   const char* stateClass;
@@ -103,12 +111,14 @@ struct Entity {
 };
 
 const Entity ENTITIES[] = {
-    {"dose", "Last dose", "actual", "g", "weight", "measurement", "mdi:coffee"},
-    {"target", "Last target", "target", "g", "weight", "measurement", "mdi:target"},
-    {"time", "Last grind time", "time", "s", "duration", "measurement", "mdi:timer-outline"},
-    {"offset", "Grind offset", "new_offset", "g", "weight", "measurement", "mdi:tune"},
-    {"result", "Last result", "result", nullptr, nullptr, nullptr, "mdi:information-outline"},
-    {"grinds", "Grinds", "grinds", nullptr, nullptr, "total_increasing", "mdi:counter"},
+    // Dose statistics only from grinds that finished normally, not partial
+    // weights from stopped or cut-off ones
+    {"dose", "Last dose", "dose", "actual", "g", "weight", "measurement", "mdi:coffee"},
+    {"target", "Last target", "dose", "target", "g", "weight", "measurement", "mdi:target"},
+    {"time", "Last grind time", "dose", "time", "s", "duration", "measurement", "mdi:timer-outline"},
+    {"offset", "Grind offset", "grind", "new_offset", "g", "weight", "measurement", "mdi:tune"},
+    {"result", "Last result", "grind", "result", nullptr, nullptr, nullptr, "mdi:information-outline"},
+    {"grinds", "Grinds", "grind", "grinds", nullptr, nullptr, "total_increasing", "mdi:counter"},
 };
 
 // Home Assistant MQTT discovery: one retained config message per sensor
@@ -118,13 +128,13 @@ void sendDiscovery() {
     snprintf(topic, sizeof topic, "homeassistant/sensor/%s/%s/config", deviceId, e.key);
     Text p;
     p.add("{\"name\":\"%s\",\"uniq_id\":\"%s_%s\"", e.name, deviceId, e.key);
-    p.add(",\"stat_t\":\"%s/grind\",\"val_tpl\":\"{{ value_json.%s }}\"", baseTopic, e.field);
+    p.add(",\"stat_t\":\"%s/%s\",\"val_tpl\":\"{{ value_json.%s }}\"", baseTopic, e.topic, e.field);
     p.add(",\"avty_t\":\"%s/status\",\"frc_upd\":true,\"ic\":\"%s\"", baseTopic, e.icon);
     if (e.unit) p.add(",\"unit_of_meas\":\"%s\"", e.unit);
     if (e.deviceClass) p.add(",\"dev_cla\":\"%s\"", e.deviceClass);
     if (e.stateClass) p.add(",\"stat_cla\":\"%s\"", e.stateClass);
     // The whole grind record as attributes on the main sensor
-    if (strcmp(e.key, "dose") == 0) p.add(",\"json_attr_t\":\"%s/grind\"", baseTopic);
+    if (strcmp(e.key, "dose") == 0) p.add(",\"json_attr_t\":\"%s/dose\"", baseTopic);
     p.add(",\"dev\":{\"ids\":[\"%s\"],\"name\":\"GrinderBot\",\"mf\":\"Tailslide\","
           "\"mdl\":\"MKR WiFi 1010 grinder scale\"}}",
           deviceId);
@@ -137,16 +147,21 @@ void sendDiscovery() {
   }
 }
 
+// Every grind goes to <base>/grind; ones that reached the target also go to
+// <base>/dose. Both retained, so Home Assistant has them after a restart.
 void publishGrind(const GrindRecord& r) {
   char topic[48];
   snprintf(topic, sizeof topic, "%s/grind", baseTopic);
+  char doseTopic[48];
+  snprintf(doseTopic, sizeof doseTopic, "%s/dose", baseTopic);
   char payload[200];
   snprintf(payload, sizeof payload,
            "{\"dose\":%u,\"target\":%.1f,\"actual\":%.1f,\"time\":%.1f,\"offset\":%.2f,"
            "\"new_offset\":%.2f,\"learned\":%s,\"result\":\"%s\",\"grinds\":%lu}",
            (unsigned)r.dose, r.targetG, r.actualG, r.seconds, r.offsetG, r.newOffsetG,
            r.learned ? "true" : "false", GrindResultName(r.result), (unsigned long)r.count);
-  if (publish(topic, payload, true)) {
+  bool done = (r.result == GrindResult::Done);
+  if (publish(topic, payload, true) && (!done || publish(doseTopic, payload, true))) {
     havePending = false;
     Serial.print("MQTT: published ");
     Serial.println(payload);
@@ -165,6 +180,7 @@ bool mqttConnect() {
   mqtt.print("offline");
   mqtt.endWill();
   wifiClient.setConnectionTimeout(TCP_CONNECT_TIMEOUT_MS);
+  WatchdogFeed();  // a failed connect can take ~11 s (TCP, CONNACK, close)
   Serial.print("MQTT: connecting to " MQTT_HOST "... ");
   IPAddress ip;
   bool ok = ip.fromString(MQTT_HOST) ? mqtt.connect(ip, MQTT_PORT) : mqtt.connect(MQTT_HOST, MQTT_PORT);

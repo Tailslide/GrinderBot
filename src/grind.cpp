@@ -29,7 +29,9 @@ unsigned long lastData = 0;
 unsigned long lastProgress = 0;
 unsigned long stableSince = 0;
 float lastG = 0;
-float peakG = 0;
+float peakG = 0;   // for the stall check: last level that counted as progress
+float maxG = 0;    // highest reading this grind
+int tareReadings = 0;
 float stableRefG = 0;
 int liftCount = 0;
 GrindResult pendingResult = GrindResult::None;
@@ -54,7 +56,7 @@ void saveGrindSettings() {
   settings.selectedDose = selected;
   settings.offsetSet = offsetIsSet ? 1 : 0;
   settings.offsetCg = (int16_t)lroundf(offsetG * 100.0f);
-  SaveSettings();
+  ServoSaveSettingsAtRest();  // after a grind, once the servo has stopped getting pulses
 }
 
 void restoreSamples() {
@@ -99,7 +101,7 @@ void finish(float actual) {
   last.newOffsetG = offsetG;
   settings.grindCount++;
   last.count = settings.grindCount;
-  saveGrindSettings();  // servo is at rest, so a slow flash write is harmless here
+  saveGrindSettings();
   state = State::Idle;
   finishedFlag = true;
   Serial.print("Grind ");
@@ -122,8 +124,12 @@ void release(GrindResult r) {
   releaseTime = millis();
   pendingResult = r;
   learnFromThis = (r == GrindResult::Done);
-  if (r == GrindResult::CupLifted || r == GrindResult::ScaleError) {
-    finish(lastG);  // nothing worth waiting for
+  if (r == GrindResult::CupLifted) {
+    finish(maxG);  // what was in the cup before it went
+    return;
+  }
+  if (r == GrindResult::ScaleError) {
+    finish(lastG);  // the last reading there was
     return;
   }
   state = State::Settling;
@@ -157,9 +163,12 @@ bool GrindStart(HX711_ADC& lc) {
   showLast = false;
   // A shorter moving average while grinding means less lag. getData() first,
   // because setSamplesInUse() seeds the new average with the last value read.
+  // The tare is done here once the short average has refilled with fresh
+  // readings (GrindUpdate), rather than with the library's tareNoDelay(),
+  // which always waits for its full 18-sample buffer (~1.9 s).
   lc.getData();
   lc.setSamplesInUse(GRIND_SAMPLES);
-  lc.tareNoDelay();
+  tareReadings = 0;
   state = State::Taring;
   stateSince = millis();
   beep();
@@ -206,11 +215,14 @@ bool GrindUpdate(HX711_ADC& lc, bool newData, float weight, bool tareDone) {
       break;
 
     case State::Taring:
-      if (tareDone) {
+      if (newData && ++tareReadings >= GRIND_TARE_READINGS) {
+        // Zero on the current (short-average) reading: move the library's
+        // tare offset by it, in raw counts
+        lc.setTareOffset(lc.getTareOffset() + lroundf(weight * lc.getCalFactor()));
         ServoPress();
         state = State::Grinding;
         pressStart = stateSince = lastProgress = lastData = now;
-        lastG = peakG = 0.0f;
+        lastG = peakG = maxG = 0.0f;
         liftCount = 0;
       } else if (now - stateSince >= GRIND_TARE_TIMEOUT_MS) {
         abortBeforePress(GrindResult::ScaleError);
@@ -232,6 +244,7 @@ bool GrindUpdate(HX711_ADC& lc, bool newData, float weight, bool tareDone) {
           release(GrindResult::Done);
           break;
         }
+        if (weight > maxG) maxG = weight;
         if (weight > peakG + GRIND_STALL_G) {
           peakG = weight;
           lastProgress = now;

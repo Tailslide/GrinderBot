@@ -30,9 +30,10 @@ void SaveSettings() { settings.valid = true; flash_store.write(settings); }     
 void saveCalFactor(float f) { settings.calibrationValue = f; SaveSettings(); }  // as loadcell.cpp
 
 // watchdog.h
-bool wdArmed = false;
-void WatchdogArm() { wdArmed = true; }
-void WatchdogDisarm() { wdArmed = false; }
+unsigned long wdPeriod = 0;
+void WatchdogArm(unsigned long p) { wdPeriod = p; }
+void WatchdogDisarm() { wdPeriod = 0; }
+bool wdShort() { return wdPeriod == WATCHDOG_PERIOD_MS; }
 void WatchdogFeed() {}
 bool WatchdogCausedLastReset() { return false; }
 
@@ -53,7 +54,7 @@ UiAction last = UiAction::None;
 float rawG = 0;          // what's on the scale, grams
 float tareG = 0;         // where the scale reads zero
 bool dataOn = true;      // load cell sending readings, 10 a second
-bool tareWorks = true;   // tares finish 600 ms after they're asked for
+bool tareWorks = true;   // library tares finish 1.9 s after they're asked for (19 readings)
 float flowGps = 1.2f;    // grounds per second while the button is held
 float inflightG = 0.8f;  // grounds that still land after letting go, over 0.5 s
 float inflightLeft = 0;
@@ -61,6 +62,7 @@ unsigned long nextData = 0;
 int finished = 0;
 
 bool grinderRunning() { return fakeServoActive && fakeServoUs >= ServoPressUs() - 5; }
+float reading() { return rawG - tareG - lc.tareOffset / lc.cal; }  // what the library would report
 
 void loopOnce() {  // mirrors main.cpp's loop
   menu.update(); up.update(); down.update(); ok.update();
@@ -78,15 +80,17 @@ void loopOnce() {  // mirrors main.cpp's loop
     nextData = fakeMillis + 100;
   }
   bool tareDone = false;
-  if (lc.tareRequested && tareWorks && fakeMillis - lc.tareRequestedAt >= 600) {
+  if (lc.tareRequested && tareWorks && fakeMillis - lc.tareRequestedAt >= 1900) {
     lc.tareRequested = false;
     tareG = rawG;
+    lc.tareOffset = 0;
     tareDone = true;
   }
-  if (GrindUpdate(lc, newData, rawG - tareG, tareDone)) {
+  if (GrindUpdate(lc, newData, reading(), tareDone)) {
     finished++;
     const GrindRecord& r = GrindLastRecord();
-    beepTimes(r.result == GrindResult::Done || r.result == GrindResult::Stopped ? 2 : 3);
+    if (r.result == GrindResult::Done) beepTimes(2);
+    else if (r.result != GrindResult::Stopped) beepTimes(3);
     NetPublishGrind(r);
   }
   last = UiUpdate(lc, disp, menu, up, down, ok, tareDone);
@@ -100,7 +104,6 @@ template <class F> bool runUntil(F done, unsigned long maxMs) {
   return done();
 }
 std::string status() { return GrindStatus().s; }
-float reading() { return rawG - tareG; }
 
 #define CHECK(c) do { if (!(c)) { std::cerr << "FAIL line " << __LINE__ << ": " #c "  status=[" << status() \
   << "] screen=[" << lastScreen << "] servo=" << fakeServoUs << " reading=" << reading() << "\n"; return 1; } } while (0)
@@ -122,7 +125,7 @@ int main() {
   GrindBegin(true);
   CHECK(fakeServoFirstUs == 1024); CHECK(fakeServoAttached == 1);  // parked before attach
   CHECK(ServoRestUs() == 1024 && ServoPressUs() == 1292);
-  CHECK(!wdArmed);
+  CHECK(!wdShort());
   CHECK(status() == "Dose 1: 9.0g");
   idle(1000);
   CHECK(!fakeServoActive); CHECK(fakeDigitalWrites[4] == LOW);  // detached at rest, line low
@@ -137,12 +140,13 @@ int main() {
   rawG = 300; idle(300);
   touch(3, 100);
   CHECK(status() == "Taring..."); CHECK(lc.samples == GRIND_SAMPLES);
-  CHECK(runUntil([] { return wdArmed; }, 1000));             // tare done -> pressing
+  CHECK(runUntil([] { return wdShort(); }, 1000));             // quick tare (~0.7 s) -> pressing
+  CHECK(fabsf(reading()) < 0.01f); CHECK(lc.tares == 0);       // zeroed without the library's slow tare
   idle(120); CHECK(fakeServoUs > 1024 && fakeServoUs < 1292);  // easing onto the button
   idle(200); CHECK(fakeServoUs == 1292); CHECK(grinderRunning());
   CHECK(status() == "Grind to 18.0g");
   CHECK(runUntil([] { return !grinderRunning(); }, 30000));
-  CHECK(fakeServoUs == 1024); CHECK(!wdArmed);                // let go, watchdog off
+  CHECK(fakeServoUs == 1024); CHECK(!wdShort());                // let go, watchdog off
   CHECK(reading() >= 17.0f && reading() < 17.2f);             // at target - 1.0 g offset
   CHECK(status() == "Settling...");
   CHECK(runUntil([] { return finished == 1; }, 7000));
@@ -155,6 +159,7 @@ int main() {
   CHECK(r1.count == 1); CHECK(lastBeepTimes == 2);
   CHECK(published.size() == 1);
   CHECK(lc.samples == IDLE_SAMPLES);
+  CHECK(flash_store.writes == 1);                              // saved once the servo had detached
   CHECK(settings.grindCount == 1 && settings.offsetSet == 1 && settings.selectedDose == 2);
   CHECK(settings.offsetCg == (int16_t)lroundf(r1.newOffsetG * 100));
   CHECK(status().find("Done 17.") == 0);
@@ -175,14 +180,13 @@ int main() {
   CHECK(runUntil([] { return grinderRunning(); }, 1500));
   idle(3000);
   fakePins[1] = 1; loopOnce();
-  CHECK(fakeServoUs == 1024); CHECK(!wdArmed);
+  CHECK(fakeServoUs == 1024); CHECK(!wdShort());
   idle(100); fakePins[1] = 0; loopOnce();
   CHECK(runUntil([] { return finished == 8; }, 7000));
   CHECK(GrindLastRecord().result == GrindResult::Stopped); CHECK(!GrindLastRecord().learned);
   CHECK(GrindOffsetG() == learnedOffset); CHECK(GrindSelectedDose() == 2);  // the touch did nothing else
-  CHECK(status().find("Stopped ") == 0);
-  int tares = lc.tares;
-  idle(500); CHECK(!GrindBusy()); CHECK(lc.tares == tares);   // letting go didn't start a grind
+  CHECK(status().find("Stopped ") == 0); CHECK(lastBeepTimes == 2);  // no extra beeps for a pad stop
+  idle(500); CHECK(!GrindBusy()); CHECK(lc.samples == IDLE_SAMPLES);  // letting go didn't start a grind
   CHECK(flash_store.writes == writes + 1);
 
   // --- Empty hopper: no flow ---
@@ -202,8 +206,11 @@ int main() {
   rawG -= 300;
   CHECK(runUntil([] { return !grinderRunning(); }, 400));     // two low readings
   CHECK(GrindLastRecord().result == GrindResult::CupLifted); CHECK(finished == 10);
+  CHECK(GrindLastRecord().actualG > 3.0f && GrindLastRecord().actualG < 4.5f);  // the dose before the lift
   CHECK(status() == "Cup lifted"); CHECK(!GrindBusy());
-  idle(1000);
+  writes = flash_store.writes;
+  CHECK(fakeServoActive);                                      // still being driven back to rest...
+  idle(1000); CHECK(!fakeServoActive); CHECK(flash_store.writes == writes + 1);  // ...so saved after
 
   // --- Load cell goes quiet mid-grind ---
   rawG = 300; idle(300);
@@ -232,19 +239,21 @@ int main() {
   CHECK(!GrindBusy()); CHECK(status() == "Stopped"); CHECK(lc.samples == IDLE_SAMPLES);
   idle(1000);
   CHECK(fakeServoUs == 1024); CHECK(published.size() == logged); CHECK(settings.grindCount == count);
-  CHECK(lc.tares == tares + 4 + 1);  // the 4 grinds above, plus this one (not a ≡ tare on release)
+  CHECK(lc.tares == 0);  // grinds tare themselves; letting go of ≡ didn't tare either
 
-  // --- A tare that never finishes ---
-  tareWorks = false;
+  // --- No readings while taring: never presses ---
+  dataOn = false; lastBeepTimes = 0;
   touch(3, 100); idle(3100);
   CHECK(!GrindBusy()); CHECK(status() == "Scale error"); CHECK(lastBeepTimes == 3);
-  CHECK(fakeServoUs == 1024); CHECK(published.size() == logged);
-  tareWorks = true; lc.tareRequested = false;
+  CHECK(fakeServoUs == 1024); CHECK(published.size() == logged); CHECK(lc.samples == IDLE_SAMPLES);
+  dataOn = true; idle(200);
 
-  // --- Tap ≡ to tare ---
-  tares = lc.tares;
+  // --- Tap ≡ to tare (the library's tare, ~1.9 s) ---
+  int tares = lc.tares;
+  rawG = 250; idle(200);
   touch(0, 100); CHECK(lc.tares == tares + 1); CHECK(status() == "Zeroing...");
-  idle(700); CHECK(!GrindBusy()); CHECK(status() == "Dose 2: 18.0g");
+  idle(1000); CHECK(GrindBusy());
+  idle(1000); CHECK(!GrindBusy()); CHECK(status() == "Dose 2: 18.0g"); CHECK(fabsf(reading()) < 0.01f);
 
   // --- Menu: two items per screen, ▲/▼ wrap ---
   touch(0, 2100); CHECK(lastScreen == ">Calibrate\r\n Servo pos"); CHECK(last == UiAction::None);
@@ -283,6 +292,8 @@ int main() {
   int shown = (int)lroundf(learnedOffset * 10);
   char expect[40]; snprintf(expect, sizeof expect, "Offset  %d.%d\r\n^v adj, OK", shown / 10, shown % 10);
   CHECK(lastScreen == expect);
+  touch(3, 100); CHECK(GrindOffsetG() == learnedOffset);  // OK unchanged keeps the finer learned value
+  touch(0, 2100); for (int i = 0; i < 4; i++) touch(2, 100); touch(3, 100);
   touch(1, 100); touch(3, 100);
   CHECK(fabsf(GrindOffsetG() - (shown + 1) / 10.0f) < 0.001f);
 
@@ -295,7 +306,7 @@ int main() {
   // --- Calibration through the menu ---
   writes = flash_store.writes;
   touch(0, 2100); touch(3, 100); CHECK(lastScreen == "Empty scale\r\nthen OK");
-  touch(3, 100); idle(700); CHECK(lastScreen == "Put 100 g\r\n^v adj, OK");
+  touch(3, 100); idle(2000); CHECK(lastScreen == "Put 100 g\r\n^v adj, OK");
   touch(1, 100); CHECK(lastScreen == "Put 200 g\r\n^v adj, OK");
   lc.rawCountsAboveTare = 696L * 200; touch(3, 100); idle(200); CHECK(lastScreen == "200.0 g\r\nOK to save");
   touch(3, 100); CHECK(lastScreen == "Saved"); CHECK(settings.calMassGrams == 200);
@@ -304,28 +315,30 @@ int main() {
 
   // --- Servo setup: menu, ▼, OK; the watchdog runs while the arm is off rest ---
   touch(0, 2100); touch(2, 100); touch(3, 100);
-  CHECK(lastScreen == "Rest  1024\r\n^v adj, OK"); CHECK(fakeServoUs == 1024); CHECK(!wdArmed);
+  CHECK(lastScreen == "Rest  1024\r\n^v adj, OK"); CHECK(fakeServoUs == 1024); CHECK(!wdShort());
   touch(1, 100); CHECK(lastScreen == "Rest  1034\r\n^v adj, OK"); CHECK(fakeServoUs == 1034);
-  CHECK(fakeServoActive); CHECK(wdArmed);
+  CHECK(fakeServoActive); CHECK(wdShort());
   touch(1, 1000); CHECK(fakeServoUs >= 1034 + 10 * 6 && fakeServoUs <= 1034 + 10 * 8);
   int afterHold = fakeServoUs;
   touch(2, 100); touch(2, 100); CHECK(fakeServoUs == afterHold - 20);
   int restSet = fakeServoUs;
-  touch(3, 100); CHECK(lastScreen == "Press 1292\r\n^v adj, OK"); CHECK(fakeServoUs == 1292); CHECK(wdArmed);
+  touch(3, 100); CHECK(lastScreen == "Press 1292\r\n^v adj, OK"); CHECK(fakeServoUs == 1292); CHECK(wdShort());
   touch(2, 100); touch(2, 100); CHECK(fakeServoUs == 1272);
-  touch(3, 100); CHECK(lastScreen == "Saved"); CHECK(fakeServoUs == restSet); CHECK(!wdArmed);
+  touch(3, 100); CHECK(lastScreen == "Saved"); CHECK(fakeServoUs == restSet); CHECK(!wdShort());
   CHECK(settings.servoRestUs == restSet && settings.servoPressUs == 1272);
   CHECK(ServoRestUs() == restSet && ServoPressUs() == 1272);
+  writes = flash_store.writes;
+  idle(1000); CHECK(flash_store.writes == writes + 1);  // written once the servo stopped getting pulses
   // Cancel mid-setup: back to the saved rest, nothing written
   writes = flash_store.writes;
   touch(0, 2100); touch(2, 100); touch(3, 100); touch(1, 100); CHECK(fakeServoUs == restSet + 10);
-  touch(0, 100); CHECK(lastScreen == "Cancelled"); CHECK(fakeServoUs == restSet); CHECK(!wdArmed);
+  touch(0, 100); CHECK(lastScreen == "Cancelled"); CHECK(fakeServoUs == restSet); CHECK(!wdShort());
   CHECK(flash_store.writes == writes);
   idle(1000); CHECK(!GrindBusy()); CHECK(!fakeServoActive);  // letting go of ≡ didn't tare
   // Walk away while setting the press position: times out back to rest
   touch(0, 2100); touch(2, 100); touch(3, 100); touch(3, 100); CHECK(fakeServoUs == 1272);
   idle(19000); CHECK(fakeServoUs == 1272);
-  idle(1500); CHECK(lastScreen == "Timed out"); CHECK(fakeServoUs == restSet); CHECK(!wdArmed);
+  idle(1500); CHECK(lastScreen == "Timed out"); CHECK(fakeServoUs == restSet); CHECK(!wdShort());
 
   // --- A grind with the new positions ---
   CHECK(grindOnce() == 0);

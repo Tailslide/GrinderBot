@@ -1,5 +1,5 @@
 /**
- watchdog.cpp - SAMD21 watchdog, armed while the servo holds the grinder button
+ watchdog.cpp - SAMD21 watchdog (see watchdog.h)
 **/
 
 #include <Arduino.h>
@@ -8,6 +8,7 @@
 namespace {
 
 bool armed = false;
+uint8_t armedPer = 0;
 bool clockReady = false;
 
 void waitSync() {
@@ -26,22 +27,32 @@ void setupClock() {
   clockReady = true;
 }
 
+// CONFIG.PER: 0x8 = 2048 cycles (2 s) ... 0xB = 16384 cycles (16 s)
+uint8_t perFor(unsigned long ms) {
+  if (ms >= 16000) return 0xB;
+  if (ms >= 8000) return 0xA;
+  if (ms >= 4000) return 0x9;
+  return 0x8;
+}
+
 }  // namespace
 
-void WatchdogArm() {
-  if (armed) return;
+void WatchdogArm(unsigned long periodMs) {
+  uint8_t per = perFor(periodMs);
+  if (armed && per == armedPer) return;
   if (!clockReady) setupClock();
   WDT->CTRL.reg = 0;  // must be disabled while configuring
   waitSync();
-  WDT->INTENCLR.bit.EW = 1;          // no early-warning interrupt
-  WDT->CONFIG.bit.PER = 0x8;         // 2048 clock cycles = 2 s
-  WDT->CTRL.bit.WEN = 0;             // normal (not window) mode
+  WDT->INTENCLR.bit.EW = 1;  // no early-warning interrupt
+  WDT->CONFIG.bit.PER = per;
+  WDT->CTRL.bit.WEN = 0;     // normal (not window) mode
   waitSync();
   WDT->CLEAR.reg = WDT_CLEAR_CLEAR_KEY;
   waitSync();
   WDT->CTRL.bit.ENABLE = 1;
   waitSync();
   armed = true;
+  armedPer = per;
 }
 
 void WatchdogDisarm() {
@@ -53,7 +64,7 @@ void WatchdogDisarm() {
 
 void WatchdogFeed() {
   // Skip if the previous clear is still crossing into the slow clock domain;
-  // the loop comes round again in a few ms, well inside the 2 s period.
+  // the loop comes round again in a few ms, well inside the period.
   if (armed && !WDT->STATUS.bit.SYNCBUSY) WDT->CLEAR.reg = WDT_CLEAR_CLEAR_KEY;
 }
 

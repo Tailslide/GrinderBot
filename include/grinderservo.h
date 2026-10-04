@@ -10,8 +10,8 @@
 // replace these.
 const int SERVO_DEFAULT_REST_US = 1024;   // arm clear of the manual button
 const int SERVO_DEFAULT_PRESS_US = 1292;  // arm holding the manual button down
-const int SERVO_MIN_US = 500;             // limits for adjusting from the pads
-const int SERVO_MAX_US = 2500;
+const int SERVO_MIN_US = 544;             // limits for adjusting from the pads (the Servo
+const int SERVO_MAX_US = 2400;            //   library clamps to these anyway)
 
 // ServoPress() eases onto the button over this long instead of slamming it
 const unsigned long SERVO_PRESS_RAMP_MS = 250;
@@ -35,4 +35,12 @@ void ServoRest();           // straight back to rest (fast, so a grind stops on 
 void ServoPress();          // ease onto the button
 bool ServoAtRest();         // commanded to rest and already there
 
-// Anywhere other than rest, the watchdog (watchdog.h) is armed.
+// Anywhere other than rest, the watchdog (watchdog.h) runs with its short
+// period; back at rest it goes back to the long one.
+
+// Write the settings to flash once the servo is at rest and no longer getting
+// pulses. A flash write stalls the CPU, interrupts included, for a few ms; if
+// that lands mid-pulse the pulse comes out several ms long, which can kick
+// the servo towards the button. Settings changed while idle are saved within
+// one loop.
+void ServoSaveSettingsAtRest();
