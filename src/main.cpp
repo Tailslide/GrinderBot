@@ -1,37 +1,41 @@
 /**************************************************************************
- GrinderBot - coffee grinder scale
+ GrinderBot - coffee grinder scale that grinds by weight
  **************************************************************************/
 #include <Arduino.h>
 #include <Wire.h>
-#include <Chrono.h>
 #include "loadcell.h"
 #include "display.h"
 #include "FlashStore.h"
 #include "pads.h"
 #include "grinderservo.h"
+#include "grind.h"
+#include "net.h"
+#include "watchdog.h"
 #include "ui.h"
 
 HX711_ADC LoadCell(HX711_dout, HX711_sck);
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
-Chrono timer(Chrono::SECONDS);
 
 // Touch pads (TTP223 boards: output is HIGH while the pad is touched)
-Pad menuPad(0);  // ≡   tap: servo test, hold 2 s: menu (Calibrate / Servo pos)
-Pad upPad(1);    // 1 ▲
-Pad downPad(2);  // 2 ▼
-Pad okPad(3);    // OK
+Pad menuPad(0);  // ≡    tap: tare, hold 2 s: menu
+Pad upPad(1);    // 1 ▲  tap: dose 1, hold: edit it; up in menus
+Pad downPad(2);  // 2 ▼  tap: dose 2, hold: edit it; down in menus
+Pad okPad(3);    // OK   grind / select
 const int servoPin = 4;
 const int buzzerPin = 5;
 
-const int SERVO_TEST_STEP_US = 6;  // ~1 degree per step, like the original sweep
 const unsigned int BEEP_HZ = 3000;
 const unsigned long BEEP_MS = 50;
+const unsigned long BEEP_GAP_MS = 120;
 const unsigned long DISPLAY_INTERVAL_MS = 150;
+const unsigned long NO_DATA_MS = 1000;  // idle: say so if the load cell goes quiet this long
 
-// Show calibration prompts on the screen
-void ScreenDisplay(const char* message) {
-  DisplayMessage(display, message);
-}
+bool scaleOk = false;
+float weight = 0.0f;
+unsigned long lastData = 0;
+unsigned long tDisplay = 0;
+int beepsLeft = 0;
+unsigned long nextBeep = 0;
 
 // Non-blocking beep. tone() runs on timer TC5; the Servo library uses TC4,
 // so the two don't interfere.
@@ -39,20 +43,17 @@ void beep() {
   tone(buzzerPin, BEEP_HZ, BEEP_MS);
 }
 
-// Temporary test from commit 1ec3ed7: slowly press the manual button, hold it
-// for 5 s, then release. It blocks the loop while running; the grind-by-weight
-// code will replace it. Uses the saved rest/press positions.
-void servoPressTest() {
-  int from = ServoRestUs();
-  int to = ServoPressUs();
-  int step = (to > from) ? SERVO_TEST_STEP_US : -SERVO_TEST_STEP_US;
-  for (int us = from; (step > 0) ? (us < to) : (us > to); us += step) {
-    ServoWriteUs(us);
-    delay(15);
+void beepTimes(int n) {
+  beepsLeft = n;
+  nextBeep = millis();
+}
+
+void updateBeeps() {
+  if (beepsLeft > 0 && (long)(millis() - nextBeep) >= 0) {
+    beep();
+    beepsLeft--;
+    nextBeep = millis() + BEEP_MS + BEEP_GAP_MS;
   }
-  ServoPress();
-  delay(5000);
-  ServoRest();
 }
 
 void setup() {
@@ -63,6 +64,7 @@ void setup() {
   delay(10);
   Serial.println();
   Serial.println("Starting...");
+  if (WatchdogCausedLastReset()) Serial.println("Restarted by the watchdog (firmware hung while grinding)");
   Serial.print("Servo rest ");
   Serial.print(ServoRestUs());
   Serial.print(" us, press ");
@@ -73,57 +75,73 @@ void setup() {
   downPad.begin();
   okPad.begin();
   pinMode(buzzerPin, OUTPUT);
-  SetupDisplay(display);
+
+  if (!SetupDisplay(display)) {
+    // Keep going without a screen, but make it obvious something's wrong
+    tone(buzzerPin, 800, 600);
+    delay(800);
+  }
+  if (WatchdogCausedLastReset()) DisplayMessage(display, "Watchdog\r\nrestart", 2000);
+
   String message;
-  SetupLoadCell(LoadCell, message);
-  if (message != "") DisplayMessage(display, message, 3000);
-  timer.restart();
-  DisplayWeight(display, timer, 0.0f);
-  display.display();
+  scaleOk = SetupLoadCell(LoadCell, message);
+  if (message != "") DisplayMessage(display, message, scaleOk ? 1500 : 3000);
+  GrindBegin(scaleOk);
+  NetBegin();
+  lastData = millis();
   Serial.println("Started");
 }
 
-unsigned long tDisplay = 0;
-
 void loop() {
-  static bool newDataReady = false;
+  WatchdogFeed();
 
   menuPad.update();
   upPad.update();
   downPad.update();
   okPad.update();
 
-  // check for new data/start next conversion:
-  if (LoadCell.update()) newDataReady = true;
+  bool newData = false;
+  bool tareDone = false;
+  if (scaleOk) {
+    if (LoadCell.update()) {
+      newData = true;
+      weight = LoadCell.getData();
+      lastData = millis();
+    }
+    // getTareStatus() clears the flag when read, so read it once here
+    tareDone = LoadCell.getTareStatus();
+    if (tareDone) Serial.println("Tare complete");
+  }
 
-  // check if the last tare operation is complete. getTareStatus() clears the
-  // flag when read, so read it once here and hand it to whoever needs it.
-  bool tareDone = LoadCell.getTareStatus();
-  if (tareDone) Serial.println("Tare complete");
+  // Grind logic before the pads, so safety stops never wait on the UI
+  if (GrindUpdate(LoadCell, newData, weight, tareDone)) {
+    const GrindRecord& r = GrindLastRecord();
+    beepTimes(r.result == GrindResult::Done || r.result == GrindResult::Stopped ? 2 : 3);
+    NetPublishGrind(r);
+  }
 
   UiAction action = UiUpdate(LoadCell, display, menuPad, upPad, downPad, okPad, tareDone);
-  if (action == UiAction::ServoTest) {
-    Serial.println("Menu pad tapped");
-    beep();
-    servoPressTest();
-  } else if (action == UiAction::ShowWeight && newDataReady &&
-             (millis() - tDisplay >= DISPLAY_INTERVAL_MS)) {
-    // get smoothed value from the dataset. Subtracting times (rather than
-    // comparing millis() > t + interval) keeps working when millis() wraps.
-    float weight = LoadCell.getData();
-    newDataReady = false;
+  ServoUpdate();
+  updateBeeps();
+
+  if (action == UiAction::ShowWeight && millis() - tDisplay >= DISPLAY_INTERVAL_MS) {
+    // (Subtracting times keeps working when millis() wraps.)
     tDisplay = millis();
-    DisplayWeight(display, timer, weight);
-    display.display();
+    String left = GrindStatus();
+    String right = GrindStatusRight();
+    if (scaleOk && !GrindBusy() && millis() - lastData > NO_DATA_MS) left = "No load cell data";
+    if (right.length() == 0 && NetConnected()) right = "HA";
+    DisplayWeight(display, scaleOk ? weight : NAN, left, right);
   }
+
+  bool quiet = !GrindBusy() && ServoAtRest();
+  NetUpdate(quiet, quiet && UiIdle());
 
   // receive command from serial terminal
   if (Serial.available() > 0) {
     char inByte = Serial.read();
-    if (inByte == 't') LoadCell.tareNoDelay();                   // tare
-    else if (inByte == 'r') calibrate(LoadCell, ScreenDisplay);  // calibrate with a known mass
-    else if (inByte == 'c') changeSavedCalFactor(LoadCell);      // type in a calibration factor
+    if (inByte == 't' && !GrindBusy()) GrindZero(LoadCell);  // tare
   }
 
-  delay(10);
+  delay(5);
 }

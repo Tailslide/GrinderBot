@@ -27,9 +27,10 @@ class Pad {
     if (pressed_) {
       downSince_ = now;
       longFired_ = false;
+      consumed_ = false;
       repeated_ = true;
       nextRepeat_ = now + PAD_REPEAT_DELAY_MS;
-    } else if (down && (long)(now - nextRepeat_) >= 0) {
+    } else if (down && !consumed_ && (long)(now - nextRepeat_) >= 0) {
       repeated_ = true;
       nextRepeat_ = now + PAD_REPEAT_MS;
     }
@@ -46,13 +47,19 @@ class Pad {
   bool tapped() const { return tapped_; }            // let go before a long press
   bool longPressed() const { return longPressed_; }  // held PAD_LONG_PRESS_MS (once per hold)
 
-  // The current touch has been used (e.g. to cancel), so letting go or
-  // holding on must not also count as a tap or long press.
-  void consume() { longFired_ = true; }
+  // The current touch has been used (e.g. to cancel, or by a settings
+  // screen), so letting go or holding on must not also count as a tap or a
+  // long press. With stopRepeats, holding on doesn't auto-repeat either (for
+  // a long press that just opened an editor).
+  void consume(bool stopRepeats = false) {
+    longFired_ = true;
+    if (stopRepeats) consumed_ = true;
+  }
 
  private:
   uint8_t pin_;
   bool down_ = false;
+  bool consumed_ = false;
   bool pressed_ = false;
   bool repeated_ = false;
   bool tapped_ = false;

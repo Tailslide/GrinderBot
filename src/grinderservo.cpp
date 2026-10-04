@@ -5,13 +5,23 @@
 #include <Arduino.h>
 #include <Servo.h>
 #include "grinderservo.h"
+#include "watchdog.h"
 #include "FlashStore.h"
 
 namespace {
 
 Servo servo;
+int servoPin = -1;
 int restUs = SERVO_DEFAULT_REST_US;
 int pressUs = SERVO_DEFAULT_PRESS_US;
+bool attached = false;
+
+int currentUs = SERVO_DEFAULT_REST_US;  // last pulse sent
+int fromUs = SERVO_DEFAULT_REST_US;     // ramp start
+int targetUs = SERVO_DEFAULT_REST_US;   // where the arm is headed
+unsigned long rampStart = 0;
+unsigned long rampMs = 0;
+unsigned long restSince = 0;
 
 int clampUs(int us) {
   if (us < SERVO_MIN_US) return SERVO_MIN_US;
@@ -19,16 +29,62 @@ int clampUs(int us) {
   return us;
 }
 
+void output(int us) {
+  currentUs = us;
+  servo.writeMicroseconds(us);  // set before attach(), so the first pulse is right
+  if (!attached) {
+    servo.attach(servoPin);
+    attached = true;
+  }
+}
+
+void moveTo(int us, unsigned long ms) {
+  us = clampUs(us);
+  fromUs = currentUs;
+  targetUs = us;
+  rampStart = millis();
+  rampMs = ms;
+  if (us == restUs) {
+    WatchdogDisarm();
+    restSince = millis();
+  } else {
+    WatchdogArm();
+  }
+  output(ms == 0 ? us : fromUs);
+}
+
 }  // namespace
 
 void ServoBegin(int pin) {
+  servoPin = pin;
   // Use saved positions if there are any (0 means never saved)
   if (settings.valid && settings.servoRestUs != 0 && settings.servoPressUs != 0) {
     restUs = clampUs(settings.servoRestUs);
     pressUs = clampUs(settings.servoPressUs);
   }
-  servo.writeMicroseconds(restUs);  // before attach(): the first pulse is already "rest"
-  servo.attach(pin);
+  currentUs = fromUs = targetUs = restUs;
+  rampMs = 0;
+  restSince = millis();
+  output(restUs);
+}
+
+void ServoUpdate() {
+  unsigned long now = millis();
+  if (currentUs != targetUs) {
+    unsigned long t = now - rampStart;
+    if (rampMs == 0 || t >= rampMs) {
+      output(targetUs);
+    } else {
+      output(fromUs + (long)(targetUs - fromUs) * (long)t / (long)rampMs);
+    }
+  }
+  if (attached && ServoAtRest() && now - restSince >= SERVO_DETACH_MS) {
+    servo.detach();
+    // detach() can land in the middle of a pulse, and the library only ends
+    // pulses for attached servos, so make sure the line is left low
+    digitalWrite(servoPin, LOW);
+    attached = false;
+  }
 }
 
 int ServoRestUs() { return restUs; }
@@ -41,6 +97,7 @@ void ServoSetPositions(int newRestUs, int newPressUs) {
   settings.servoPressUs = pressUs;
 }
 
-void ServoWriteUs(int us) { servo.writeMicroseconds(clampUs(us)); }
-void ServoRest() { servo.writeMicroseconds(restUs); }
-void ServoPress() { servo.writeMicroseconds(pressUs); }
+void ServoWriteUs(int us) { moveTo(us, 0); }
+void ServoRest() { moveTo(restUs, 0); }
+void ServoPress() { moveTo(pressUs, SERVO_PRESS_RAMP_MS); }
+bool ServoAtRest() { return targetUs == restUs && currentUs == restUs; }
