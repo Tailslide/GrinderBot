@@ -3,14 +3,14 @@
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
 #include <Fonts/FreeMono9pt7b.h>
-#include <Fonts/FreeSansBold18pt7b.h>
+#include <Fonts/FreeSansBold12pt7b.h>
 #include "display.h"
 
 namespace {
 
 bool ready = false;
 
-const int WEIGHT_BASELINE = 31;  // bottom row; 25 px digits reach up to row 7
+const int WEIGHT_BASELINE = 29;  // 17 px digits on rows 13-29, clear of the status line (rows 0-7)
 const int WEIGHT_RIGHT = 120;    // digits end here, the small "g" follows
 
 }  // namespace
@@ -83,7 +83,7 @@ void DisplayWeight(Adafruit_SSD1306& display, float weight, const String& left, 
     if (fabsf(weight) < 0.05f) weight = 0.0f;  // no "-0.0"
     snprintf(text, sizeof text, "%.1f", weight);
   }
-  display.setFont(&FreeSansBold18pt7b);
+  display.setFont(&FreeSansBold12pt7b);
   int16_t x1, y1;
   uint16_t w, h;
   display.getTextBounds(text, 0, WEIGHT_BASELINE, &x1, &y1, &w, &h);
