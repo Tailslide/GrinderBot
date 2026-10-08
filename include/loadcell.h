@@ -10,7 +10,7 @@ const int HX711_sck = 7; //mcu > HX711 sck pin
 // Uploading new firmware wipes the saved value (FlashStorage keeps it inside
 // the program image), so once you've calibrated from the panel, put the factor
 // it prints over serial here and readings stay in grams after every upload.
-const float DEFAULT_CAL_FACTOR = 1.0f;
+const float DEFAULT_CAL_FACTOR = 1635.7321f;
 
 // Start the HX711, tare, and load the calibration. Returns false if the
 // HX711 doesn't answer (message says what to check).
