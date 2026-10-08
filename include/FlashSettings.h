@@ -12,7 +12,7 @@ typedef struct {
   uint16_t dose1Dg;        // dose presets on the 1 / 2 pads, in 0.1 g
   uint16_t dose2Dg;
   uint8_t selectedDose;    // 1 or 2
-  uint8_t offsetSet;       // 1 once a grind offset has been learned or entered
-  int16_t offsetCg;        // grind offset in 0.01 g (only if offsetSet)
+  uint8_t offsetSet[2];    // per dose (1, 2): 1 once its grind offset has been learned or entered
+  int16_t offsetCg[2];     // per dose: grind offset in 0.01 g (only if offsetSet)
   uint32_t grindCount;     // grinds that ran the grinder, for Home Assistant
 } FlashSettings;

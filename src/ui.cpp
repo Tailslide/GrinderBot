@@ -14,9 +14,10 @@
 
 namespace {
 
-enum MenuItem { ITEM_CALIBRATE, ITEM_SERVO, ITEM_DOSE1, ITEM_DOSE2, ITEM_OFFSET, ITEM_NETWORK, MENU_COUNT };
-const char* const MENU_ITEMS[MENU_COUNT] = {"Calibrate", "Servo pos", "Dose 1", "Dose 2", "Offset",
-                                            "Network"};
+enum MenuItem { ITEM_CALIBRATE, ITEM_SERVO, ITEM_DOSE1, ITEM_DOSE2, ITEM_OFFSET1, ITEM_OFFSET2,
+                ITEM_NETWORK, MENU_COUNT };
+const char* const MENU_ITEMS[MENU_COUNT] = {"Calibrate", "Servo pos", "Dose 1",  "Dose 2",
+                                            "Offset 1",  "Offset 2",  "Network"};
 
 const unsigned long INFO_REFRESH_MS = 1000;
 const unsigned long INFO_TIMEOUT_MS = 30000;
@@ -52,9 +53,16 @@ void showInfo(Adafruit_SSD1306& display) {
 
 void saveDose1(int tenths) { GrindSetDoseDg(1, tenths); }
 void saveDose2(int tenths) { GrindSetDoseDg(2, tenths); }
-void saveOffset(int tenths) {
-  // OK without changing it keeps the learned value (finer than 0.1 g)
-  if (tenths != (int)lroundf(GrindOffsetG() * 10.0f)) GrindSetOffsetG(tenths / 10.0f);
+// OK without changing it keeps the learned value (finer than 0.1 g)
+void saveOffset(int n, int tenths) {
+  if (tenths != (int)lroundf(GrindOffsetG(n) * 10.0f)) GrindSetOffsetG(n, tenths / 10.0f);
+}
+void saveOffset1(int tenths) { saveOffset(1, tenths); }
+void saveOffset2(int tenths) { saveOffset(2, tenths); }
+
+void editOffset(Adafruit_SSD1306& display, int n) {
+  ValueEditStart(display, n == 1 ? "Ofst 1" : "Ofst 2", (int)lroundf(GrindOffsetG(n) * 10.0f), 0,
+                 (int)lroundf(OFFSET_MAX_G * 10.0f), n == 1 ? saveOffset1 : saveOffset2);
 }
 
 void editDose(Adafruit_SSD1306& display, int n) {
@@ -68,10 +76,8 @@ void openItem(HX711_ADC& LoadCell, Adafruit_SSD1306& display, int item) {
     case ITEM_SERVO: ServoSetupStart(display); break;
     case ITEM_DOSE1: editDose(display, 1); break;
     case ITEM_DOSE2: editDose(display, 2); break;
-    case ITEM_OFFSET:
-      ValueEditStart(display, "Offset", (int)lroundf(GrindOffsetG() * 10.0f), 0,
-                     (int)lroundf(OFFSET_MAX_G * 10.0f), saveOffset);
-      break;
+    case ITEM_OFFSET1: editOffset(display, 1); break;
+    case ITEM_OFFSET2: editOffset(display, 2); break;
     case ITEM_NETWORK:
       infoOpen = true;
       infoOpened = millis();

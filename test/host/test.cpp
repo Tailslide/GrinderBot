@@ -192,8 +192,9 @@ int main() {
   CHECK(published.size() == 1);
   CHECK(lc.samples == IDLE_SAMPLES);
   CHECK(flash_store.writes == 1);                              // saved once the servo had detached
-  CHECK(settings.grindCount == 1 && settings.offsetSet == 1 && settings.selectedDose == 2);
-  CHECK(settings.offsetCg == (int16_t)lroundf(r1.newOffsetG * 100));
+  CHECK(settings.grindCount == 1 && settings.offsetSet[1] == 1 && settings.selectedDose == 2);
+  CHECK(settings.offsetCg[1] == (int16_t)lroundf(r1.newOffsetG * 100));
+  CHECK(settings.offsetSet[0] == 0); CHECK(GrindOffsetG(1) == OFFSET_DEFAULT_G);  // dose 1 untouched
   CHECK(status().find("Done 17.") == 0);
   char secs[16]; snprintf(secs, sizeof secs, "%.1fs", r1.seconds); CHECK(GrindStatusRight().s == secs);
   idle(1000); CHECK(!fakeServoActive);                        // detached again
@@ -202,8 +203,8 @@ int main() {
   for (int i = 0; i < 6; i++) CHECK(grindOnce() == 0);
   CHECK(GrindLastRecord().result == GrindResult::Done);
   CHECK(fabsf(GrindLastRecord().actualG - 18.0f) < 0.15f);
-  CHECK(GrindOffsetG() > 0.7f && GrindOffsetG() < 0.95f);
-  float learnedOffset = GrindOffsetG();
+  CHECK(GrindOffsetG(2) > 0.7f && GrindOffsetG(2) < 0.95f);
+  float learnedOffset = GrindOffsetG(2);
   int writes = flash_store.writes;
 
   // --- Touching a pad stops a grind straight away ---
@@ -216,7 +217,7 @@ int main() {
   idle(100); fakePins[1] = 0; loopOnce();
   CHECK(runUntil([] { return finished == 8; }, 7000));
   CHECK(GrindLastRecord().result == GrindResult::Stopped); CHECK(!GrindLastRecord().learned);
-  CHECK(GrindOffsetG() == learnedOffset); CHECK(GrindSelectedDose() == 2);  // the touch did nothing else
+  CHECK(GrindOffsetG(2) == learnedOffset); CHECK(GrindSelectedDose() == 2);  // the touch did nothing else
   CHECK(status().find("Stopped ") == 0); CHECK(lastBeepTimes == 2);  // no extra beeps for a pad stop
   idle(500); CHECK(!GrindBusy()); CHECK(lc.samples == IDLE_SAMPLES);  // letting go didn't start a grind
   CHECK(flash_store.writes == writes + 1);
@@ -227,7 +228,7 @@ int main() {
   CHECK(GrindLastRecord().result == GrindResult::NoFlow);
   CHECK(GrindLastRecord().seconds >= 5.0f && GrindLastRecord().seconds < 5.3f);
   CHECK(lastBeepTimes == 3); CHECK(status() == "No flow: hopper?");
-  CHECK(GrindOffsetG() == learnedOffset);
+  CHECK(GrindOffsetG(2) == learnedOffset);
   flowGps = 1.2f;
 
   // --- Cup lifted mid-grind ---
@@ -260,7 +261,7 @@ int main() {
   CHECK(GrindLastRecord().result == GrindResult::MaxTime);
   CHECK(GrindLastRecord().seconds >= 60.0f && GrindLastRecord().seconds < 60.2f);
   flowGps = 1.2f;
-  CHECK(GrindOffsetG() == learnedOffset);
+  CHECK(GrindOffsetG(2) == learnedOffset);
 
   // --- Stopped while taring: the grinder never runs, nothing logged ---
   size_t logged = published.size();
@@ -292,10 +293,11 @@ int main() {
   CHECK(lc.tares == tares + 1);  // the long press didn't also tare
   touch(2, 100); CHECK(lastScreen == " Calibrate\r\n>Servo pos");
   touch(2, 100); CHECK(lastScreen == ">Dose 1\r\n Dose 2");
-  touch(2, 100); touch(2, 100); CHECK(lastScreen == ">Offset\r\n Network");
-  touch(2, 100); CHECK(lastScreen == " Offset\r\n>Network");
+  touch(2, 100); touch(2, 100); CHECK(lastScreen == ">Offset 1\r\n Offset 2");
+  touch(2, 100); CHECK(lastScreen == " Offset 1\r\n>Offset 2");
+  touch(2, 100); CHECK(lastScreen == ">Network");
   touch(2, 100); CHECK(lastScreen == ">Calibrate\r\n Servo pos");
-  touch(1, 100); CHECK(lastScreen == " Offset\r\n>Network");
+  touch(1, 100); CHECK(lastScreen == ">Network");
   touch(0, 100); idle(50); CHECK(last == UiAction::ShowWeight); CHECK(lc.tares == tares + 1);
 
   // --- Dose 1 from the menu ---
@@ -321,13 +323,30 @@ int main() {
 
   // --- Offset from the menu ---
   touch(0, 2100); for (int i = 0; i < 4; i++) touch(2, 100); touch(3, 100);
+  CHECK(lastScreen == "Ofst 1  1.0\r\n^v adj, OK");                // dose 1's own offset, still the default
+  touch(0, 100); CHECK(lastScreen == "Cancelled");
+  touch(0, 2100); for (int i = 0; i < 5; i++) touch(2, 100); touch(3, 100);
   int shown = (int)lroundf(learnedOffset * 10);
-  char expect[40]; snprintf(expect, sizeof expect, "Offset  %d.%d\r\n^v adj, OK", shown / 10, shown % 10);
+  char expect[40]; snprintf(expect, sizeof expect, "Ofst 2  %d.%d\r\n^v adj, OK", shown / 10, shown % 10);
   CHECK(lastScreen == expect);
-  touch(3, 100); CHECK(GrindOffsetG() == learnedOffset);  // OK unchanged keeps the finer learned value
-  touch(0, 2100); for (int i = 0; i < 4; i++) touch(2, 100); touch(3, 100);
+  touch(3, 100); CHECK(GrindOffsetG(2) == learnedOffset);  // OK unchanged keeps the finer learned value
+  touch(0, 2100); for (int i = 0; i < 5; i++) touch(2, 100); touch(3, 100);
   touch(1, 100); touch(3, 100);
-  CHECK(fabsf(GrindOffsetG() - (shown + 1) / 10.0f) < 0.001f);
+  CHECK(fabsf(GrindOffsetG(2) - (shown + 1) / 10.0f) < 0.001f);
+  CHECK(GrindOffsetG(1) == OFFSET_DEFAULT_G);
+
+  // --- Dose 1 learns its own offset (different beans: a faster grind) ---
+  float offset2 = GrindOffsetG(2);
+  touch(1, 100); CHECK(GrindSelectedDose() == 1);
+  flowGps = 2.0f;
+  for (int i = 0; i < 6; i++) CHECK(grindOnce() == 0);
+  CHECK(GrindLastRecord().dose == 1); CHECK(GrindLastRecord().targetG == 9.3f);
+  CHECK(fabsf(GrindLastRecord().actualG - 9.3f) < 0.15f);
+  CHECK(GrindOffsetG(1) != OFFSET_DEFAULT_G); CHECK(GrindOffsetG(2) == offset2);  // dose 2's left alone
+  CHECK(settings.offsetSet[0] == 1); CHECK(settings.offsetCg[0] == (int16_t)lroundf(GrindOffsetG(1) * 100));
+  float offset1 = GrindOffsetG(1);
+  flowGps = 1.2f;
+  touch(2, 100); CHECK(GrindSelectedDose() == 2);
 
   // --- Network screen; any pad closes it without doing anything else ---
   tares = lc.tares;
@@ -377,7 +396,7 @@ int main() {
   CHECK(GrindLastRecord().result == GrindResult::Done); CHECK(GrindLastRecord().targetG == 18.6f);
 
   // --- Cup taken away while settling: last steady reading, not learned ---
-  float before = GrindOffsetG();
+  float before = GrindOffsetG(2);
   rawG = 300; idle(300);
   touch(3, 100);
   CHECK(runUntil([] { return GrindStatus().s == "Settling..."; }, 30000));
@@ -386,7 +405,7 @@ int main() {
   rawG -= 300;
   CHECK(runUntil([] { return !GrindBusy(); }, 500));
   CHECK(GrindLastRecord().result == GrindResult::Done); CHECK(!GrindLastRecord().learned);
-  CHECK(fabsf(GrindLastRecord().actualG - steady) < 0.2f); CHECK(GrindOffsetG() == before);
+  CHECK(fabsf(GrindLastRecord().actualG - steady) < 0.2f); CHECK(GrindOffsetG(2) == before);
 
   // --- Load cell missing at boot: OK refuses ---
   GrindBegin(false);
@@ -399,7 +418,8 @@ int main() {
   fakeServoUs = -1; ServoBegin(4); CHECK(fakeServoFirstUs == restSet);
   GrindBegin(true);
   CHECK(GrindDoseDg(1) == 93 && GrindDoseDg(2) == 186 && GrindSelectedDose() == 2);
-  CHECK(fabsf(GrindOffsetG() - settings.offsetCg / 100.0f) < 0.001f);
+  CHECK(fabsf(GrindOffsetG(2) - settings.offsetCg[1] / 100.0f) < 0.001f);
+  CHECK(fabsf(GrindOffsetG(1) - offset1) < 0.006f);
 
   std::cout << "all grind / menu / settings checks passed (" << finished << " grinds, beeps=" << beeps << ")\n";
   return 0;

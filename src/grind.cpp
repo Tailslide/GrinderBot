@@ -18,8 +18,11 @@ bool scaleOk = true;
 
 int selected = 1;
 int doseDg[3] = {0, DOSE1_DEFAULT_DG, DOSE2_DEFAULT_DG};
-float offsetG = OFFSET_DEFAULT_G;
-bool offsetIsSet = false;
+// Each dose learns its own offset: they're often different beans, which
+// grind at different rates, and a bigger dose can overshoot by more.
+float offsetG[3] = {0.0f, OFFSET_DEFAULT_G, OFFSET_DEFAULT_G};  // [1], [2] used
+bool offsetIsSet[3] = {false, false, false};
+int grindDose = 1;  // the dose being ground (its preset and its offset)
 
 float targetG = 0;
 unsigned long stateSince = 0;
@@ -54,8 +57,10 @@ void saveGrindSettings() {
   settings.dose1Dg = doseDg[1];
   settings.dose2Dg = doseDg[2];
   settings.selectedDose = selected;
-  settings.offsetSet = offsetIsSet ? 1 : 0;
-  settings.offsetCg = (int16_t)lroundf(offsetG * 100.0f);
+  for (int n = 1; n <= 2; n++) {
+    settings.offsetSet[n - 1] = offsetIsSet[n] ? 1 : 0;
+    settings.offsetCg[n - 1] = (int16_t)lroundf(offsetG[n] * 100.0f);
+  }
   ServoSaveSettingsAtRest();  // after a grind, once the servo has stopped getting pulses
 }
 
@@ -64,12 +69,12 @@ void restoreSamples() {
 }
 
 void showResult(GrindResult r, float actual, float seconds) {
-  last.dose = selected;
+  last.dose = grindDose;
   last.targetG = targetG;
   last.actualG = actual;
   last.seconds = seconds;
-  last.offsetG = offsetG;
-  last.newOffsetG = offsetG;
+  last.offsetG = offsetG[grindDose];
+  last.newOffsetG = offsetG[grindDose];
   last.learned = false;
   last.result = r;
   showLast = true;
@@ -93,12 +98,12 @@ void finish(float actual) {
   if (pendingResult == GrindResult::Done && learnFromThis) {
     float miss = actual - targetG;
     if (fabsf(miss) <= OFFSET_LEARN_MAX_ERROR_G) {
-      offsetG = clampF(offsetG + OFFSET_LEARN_RATE * miss, 0.0f, OFFSET_MAX_G);
-      offsetIsSet = true;
+      offsetG[grindDose] = clampF(offsetG[grindDose] + OFFSET_LEARN_RATE * miss, 0.0f, OFFSET_MAX_G);
+      offsetIsSet[grindDose] = true;
       last.learned = true;
     }
   }
-  last.newOffsetG = offsetG;
+  last.newOffsetG = offsetG[grindDose];
   settings.grindCount++;
   last.count = settings.grindCount;
   saveGrindSettings();
@@ -115,7 +120,7 @@ void finish(float actual) {
   Serial.print(" s, offset ");
   Serial.print(last.offsetG, 2);
   Serial.print(" -> ");
-  Serial.println(offsetG, 2);
+  Serial.println(offsetG[grindDose], 2);
 }
 
 // Let go of the button
@@ -146,9 +151,11 @@ void GrindBegin(bool ok) {
   if (settings.dose1Dg >= DOSE_MIN_DG && settings.dose1Dg <= DOSE_MAX_DG) doseDg[1] = settings.dose1Dg;
   if (settings.dose2Dg >= DOSE_MIN_DG && settings.dose2Dg <= DOSE_MAX_DG) doseDg[2] = settings.dose2Dg;
   if (settings.selectedDose == 1 || settings.selectedDose == 2) selected = settings.selectedDose;
-  if (settings.offsetSet) {
-    offsetG = clampF(settings.offsetCg / 100.0f, 0.0f, OFFSET_MAX_G);
-    offsetIsSet = true;
+  for (int n = 1; n <= 2; n++) {
+    if (settings.offsetSet[n - 1]) {
+      offsetG[n] = clampF(settings.offsetCg[n - 1] / 100.0f, 0.0f, OFFSET_MAX_G);
+      offsetIsSet[n] = true;
+    }
   }
 }
 
@@ -159,7 +166,8 @@ bool GrindStart(HX711_ADC& lc) {
     beepTimes(3);
     return false;
   }
-  targetG = targetFor(selected);
+  grindDose = selected;
+  targetG = targetFor(grindDose);
   showLast = false;
   // A shorter moving average while grinding means less lag. getData() first,
   // because setSamplesInUse() seeds the new average with the last value read.
@@ -174,8 +182,10 @@ bool GrindStart(HX711_ADC& lc) {
   beep();
   Serial.print("Grind to ");
   Serial.print(targetG, 1);
-  Serial.print(" g, offset ");
-  Serial.println(offsetG, 2);
+  Serial.print(" g (dose ");
+  Serial.print(grindDose);
+  Serial.print("), offset ");
+  Serial.println(offsetG[grindDose], 2);
   return true;
 }
 
@@ -240,7 +250,7 @@ bool GrindUpdate(HX711_ADC& lc, bool newData, float weight, bool tareDone) {
         break;
       }
       if (newData) {
-        if (weight >= targetG - offsetG) {
+        if (weight >= targetG - offsetG[grindDose]) {
           release(GrindResult::Done);
           break;
         }
@@ -306,11 +316,12 @@ void GrindSetDoseDg(int n, int dg) {
   saveGrindSettings();
 }
 
-float GrindOffsetG() { return offsetG; }
+float GrindOffsetG(int n) { return (n == 1 || n == 2) ? offsetG[n] : 0.0f; }
 
-void GrindSetOffsetG(float g) {
-  offsetG = clampF(g, 0.0f, OFFSET_MAX_G);
-  offsetIsSet = true;
+void GrindSetOffsetG(int n, float g) {
+  if (n != 1 && n != 2) return;
+  offsetG[n] = clampF(g, 0.0f, OFFSET_MAX_G);
+  offsetIsSet[n] = true;
   saveGrindSettings();
 }
 

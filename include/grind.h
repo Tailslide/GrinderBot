@@ -9,6 +9,7 @@
 // target minus an offset. The offset covers what still lands after letting go
 // (grounds in the chute, the motor spinning down, the scale's averaging lag),
 // and is learned: after each normal grind it moves halfway towards the miss.
+// Dose 1 and dose 2 each learn their own offset (often different beans).
 // Any pad stops a grind. Safety stops let go of the button if the weight stops
 // rising, the cup is lifted, the load cell goes quiet or the grind runs long,
 // and the watchdog (watchdog.h) covers a hung firmware.
@@ -68,8 +69,8 @@ void GrindSelectDose(int n);  // 1 or 2
 int GrindSelectedDose();
 int GrindDoseDg(int n);
 void GrindSetDoseDg(int n, int dg);  // and save
-float GrindOffsetG();
-void GrindSetOffsetG(float g);       // and save
+float GrindOffsetG(int n);            // learned offset for dose 1 or 2
+void GrindSetOffsetG(int n, float g);  // and save
 
 String GrindStatus();       // left of the status line
 String GrindStatusRight();  // right of the status line (a time), or ""
