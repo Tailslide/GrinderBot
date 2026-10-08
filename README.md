@@ -11,6 +11,8 @@ A scale that sits under a Mazzer Mini Electronic (Type A) and grinds by weight: 
 | **2 ▼** | Tap: dose 2. Hold 2 s: edit dose 2 | Down / less |
 | **≡** | Tap: tare. Hold 2 s: menu | Back / cancel |
 
+An OK touch that overlaps a touch on another pad is ignored, and a grind starts 150 ms after OK is let go only if no other pad is touched in that time. This stops a finger on 2 ▼ that the OK sensor also picks up from starting a grind.
+
 While grinding, **touching any pad stops it** (one beep). The top line shows the dose, then progress, then the result (e.g. `Done 18.1 (+0.1)  14.3s`); the weight is in large digits below. Two beeps: the grind is done. Three: a safety stop.
 
 **Menu** (hold ≡): Calibrate · Servo pos · Dose 1 · Dose 2 · Offset · Network.

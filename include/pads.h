@@ -42,6 +42,7 @@ class Pad {
     down_ = down;
   }
 
+  bool down() const { return down_; }                // being touched right now
   bool pressed() const { return pressed_; }          // touched this loop
   bool repeated() const { return repeated_; }        // touched, or still held and due to repeat
   bool tapped() const { return tapped_; }            // let go before a long press

@@ -27,6 +27,11 @@ bool infoOpen = false;
 unsigned long infoOpened = 0;
 unsigned long infoDrawn = 0;
 
+const unsigned long OK_CONFIRM_MS = 150;  // a grind starts this long after OK is let go
+bool okSpoiled = false;                   // this OK touch overlapped another pad
+bool okPending = false;                   // OK tapped, grind about to start
+unsigned long okReleasedAt = 0;
+
 // Two items per screen; '>' marks the selection
 void showMenu(Adafruit_SSD1306& display) {
   int first = (menuIndex / 2) * 2;
@@ -86,6 +91,15 @@ UiAction UiUpdate(HX711_ADC& LoadCell, Adafruit_SSD1306& display,
   bool menuTouch = menuPad.pressed();
   bool anyTouch = menuTouch || upPad.pressed() || downPad.pressed() || okPad.pressed();
 
+  // OK sits next to 2 v, and a finger on one pad can be picked up by its
+  // neighbour too. An OK touch that overlaps a touch on another pad is
+  // ignored: it can't select, save or start a grind.
+  bool othersDown = menuPad.down() || upPad.down() || downPad.down();
+  if (okPad.pressed()) okSpoiled = othersDown;
+  else if (okPad.down() && othersDown) okSpoiled = true;
+  bool okPress = okPad.pressed() && !othersDown;
+  if (GrindBusy() || !UiIdle() || othersDown) okPending = false;
+
   // A grind in progress: any touch stops it. Touches are used up, so letting
   // go doesn't also start something. While settling or zeroing, touches are ignored.
   Pad* pads[4] = {&menuPad, &upPad, &downPad, &okPad};
@@ -112,15 +126,15 @@ UiAction UiUpdate(HX711_ADC& LoadCell, Adafruit_SSD1306& display,
 
   if (PanelCalActive()) {
     PanelCalUpdate(LoadCell, display, menuTouch, upPad.repeated(), downPad.repeated(),
-                   okPad.pressed(), tareDone);
+                   okPress, tareDone);
     return UiAction::None;
   }
   if (ServoSetupActive()) {
-    ServoSetupUpdate(display, menuTouch, upPad.repeated(), downPad.repeated(), okPad.pressed());
+    ServoSetupUpdate(display, menuTouch, upPad.repeated(), downPad.repeated(), okPress);
     return UiAction::None;
   }
   if (ValueEditActive()) {
-    ValueEditUpdate(display, menuTouch, upPad.repeated(), downPad.repeated(), okPad.pressed());
+    ValueEditUpdate(display, menuTouch, upPad.repeated(), downPad.repeated(), okPress);
     return UiAction::None;
   }
   if (infoOpen) {
@@ -143,7 +157,7 @@ UiAction UiUpdate(HX711_ADC& LoadCell, Adafruit_SSD1306& display,
     } else if (downPad.pressed()) {
       menuIndex = (menuIndex + 1) % MENU_COUNT;
       showMenu(display);
-    } else if (okPad.pressed()) {
+    } else if (okPress) {
       menuOpen = false;
       beep();
       openItem(LoadCell, display, menuIndex);
@@ -178,6 +192,16 @@ UiAction UiUpdate(HX711_ADC& LoadCell, Adafruit_SSD1306& display,
       GrindSelectDose(n);
     }
   }
-  if (okPad.tapped()) GrindStart(LoadCell);
+  // OK starts the grind once it has been let go for OK_CONFIRM_MS with no
+  // other pad touched, so a finger brushing OK on its way to 2 v doesn't
+  // start one either.
+  if (okPad.tapped() && !okSpoiled) {
+    okPending = true;
+    okReleasedAt = millis();
+  }
+  if (okPending && millis() - okReleasedAt >= OK_CONFIRM_MS) {
+    okPending = false;
+    GrindStart(LoadCell);
+  }
   return UiAction::ShowWeight;
 }

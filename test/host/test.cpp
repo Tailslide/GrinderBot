@@ -9,6 +9,7 @@
 #include "ui.h"
 #include "grind.h"
 #include "grinderservo.h"
+#include "servosetup.h"
 #include "watchdog.h"
 #include "net.h"
 #include "display.h"
@@ -97,7 +98,19 @@ void loopOnce() {  // mirrors main.cpp's loop
   ServoUpdate();
   fakeMillis += 10;
 }
-void touch(int pin, unsigned long ms) { fakePins[pin] = 1; for (unsigned long t = 0; t < ms; t += 10) loopOnce(); fakePins[pin] = 0; loopOnce(); }
+void touch(int pin, unsigned long ms) {
+  fakePins[pin] = 1; for (unsigned long t = 0; t < ms; t += 10) loopOnce(); fakePins[pin] = 0; loopOnce();
+  if (pin == 3) for (int i = 0; i < 16; i++) loopOnce();  // OK acts 150 ms after it's let go
+}
+// A finger on one pad also picked up by another for part of the touch
+void touchWithCrosstalk(int pin, int other, unsigned long ms, unsigned long otherFrom, unsigned long otherTo) {
+  for (unsigned long t = 0; t < ms; t += 10) {
+    fakePins[pin] = 1;
+    fakePins[other] = (t >= otherFrom && t < otherTo) ? 1 : 0;
+    loopOnce();
+  }
+  fakePins[pin] = 0; fakePins[other] = 0; loopOnce();
+}
 void idle(unsigned long ms) { for (unsigned long t = 0; t < ms; t += 10) loopOnce(); }
 template <class F> bool runUntil(F done, unsigned long maxMs) {
   for (unsigned long t = 0; t < maxMs; t += 10) { if (done()) return true; loopOnce(); }
@@ -134,6 +147,25 @@ int main() {
   // --- Dose selection ---
   touch(2, 100); CHECK(status() == "Dose 2: 18.0g"); CHECK(GrindSelectedDose() == 2);
   touch(1, 100); CHECK(status() == "Dose 1: 9.0g");
+
+  // --- A finger on 2 v also picked up by OK: selects dose 2, never grinds ---
+  touchWithCrosstalk(2, 3, 150, 20, 60); idle(300);       // OK flickers on and off while 2 is held
+  CHECK(GrindSelectedDose() == 2); CHECK(!GrindBusy()); CHECK(!fakeServoActive);
+  touch(1, 100);
+  touchWithCrosstalk(2, 3, 150, 0, 150); idle(300);       // both touched together for the whole touch
+  CHECK(GrindSelectedDose() == 2); CHECK(!GrindBusy());
+  touch(1, 100);
+  touchWithCrosstalk(3, 2, 150, 100, 150); idle(300);     // OK touched, 2 picked up near the end
+  CHECK(!GrindBusy());                                    // (an ambiguous touch may still pick a dose)
+  touch(1, 100);
+  fakePins[3] = 1; idle(40); fakePins[3] = 0; idle(50);  // OK brushed on the way to 2 ...
+  touch(2, 100); idle(300);                               // ... 2 touched within 150 ms
+  CHECK(!GrindBusy()); CHECK(GrindSelectedDose() == 2);
+  // In a menu, OK picked up while v is held doesn't open the item
+  touch(0, 2100); CHECK(lastScreen == ">Calibrate\r\n Servo pos");
+  touchWithCrosstalk(2, 3, 150, 40, 80); idle(50);
+  CHECK(lastScreen == " Calibrate\r\n>Servo pos"); CHECK(!ServoSetupActive());
+  touch(0, 100); idle(50); CHECK(last == UiAction::ShowWeight);
   touch(2, 100);
 
   // --- A normal grind ---
