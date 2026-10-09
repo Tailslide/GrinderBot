@@ -7,7 +7,7 @@ A scale that sits under a Mazzer Mini Electronic (Type A) and grinds by weight. 
   <img src="docs/images/grinderbot-controls.jpg" width="49%" alt="The scale with the portafilter fork stand, touch pads and display">
 </p>
 
-Arduino MKR WiFi 1010, HX711 and a 1 kg load cell, 128×32 OLED, four touch pads, a buzzer and an MG90S servo. PlatformIO project. Optional logging to Home Assistant over MQTT.
+Arduino MKR WiFi 1010, HX711 and a 1 kg load cell, 128×32 OLED, four touch pads, a buzzer and an MG90S servo. PlatformIO project. Optional logging to Home Assistant over MQTT. Print files are on [MakerWorld](https://makerworld.com/en/models/3416236-grinderbot).
 
 ## Using it
 
@@ -61,7 +61,7 @@ A watchdog also resets the board if the firmware hangs mid-grind, and the servo 
 
 ### 3D-printed parts
 
-Print files: **TODO: link**
+Print files: [GrinderBot on MakerWorld](https://makerworld.com/en/models/3416236-grinderbot)
 
 | Part | Material | Notes |
 |---|---|---|
