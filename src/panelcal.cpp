@@ -113,7 +113,7 @@ void PanelCalUpdate(HX711_ADC& LoadCell, Adafruit_SSD1306& display,
         saveCalFactor(newCalFactor);
         Serial.print("Calibration saved, factor ");
         Serial.print(newCalFactor, 4);
-        Serial.println(" (put this in DEFAULT_CAL_FACTOR to keep it across uploads)");
+        Serial.println(" (put this in DEFAULT_CAL_FACTOR in include/config_local.h to keep it across uploads)");
         beep();
         step = Step::Idle;
         DisplayMessage(display, "Saved", 1000);

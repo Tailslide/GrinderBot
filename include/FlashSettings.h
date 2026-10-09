@@ -15,4 +15,5 @@ typedef struct {
   uint8_t offsetSet[2];    // per dose (1, 2): 1 once its grind offset has been learned or entered
   int16_t offsetCg[2];     // per dose: grind offset in 0.01 g (only if offsetSet)
   uint32_t grindCount;     // grinds that ran the grinder, for Home Assistant
+  uint16_t grindMaxS;      // longest the button is held, seconds
 } FlashSettings;

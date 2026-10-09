@@ -7,9 +7,8 @@
 // library reads attach()'s min/max as microseconds (not degrees), and 0/45
 // overflowed its internal limits to a 1024-2096 us range, so write(0) sent
 // 1024 us and write(45) sent 1292 us. Saved positions (set from the pads)
-// replace these.
-const int SERVO_DEFAULT_REST_US = 1024;   // arm clear of the manual button
-const int SERVO_DEFAULT_PRESS_US = 1292;  // arm holding the manual button down
+// replace these. SERVO_DEFAULT_REST_US / SERVO_DEFAULT_PRESS_US are in config.h.
+#include "config.h"
 const int SERVO_MIN_US = 544;             // limits for adjusting from the pads (the Servo
 const int SERVO_MAX_US = 2400;            //   library clamps to these anyway)
 

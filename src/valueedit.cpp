@@ -17,11 +17,16 @@ int value = 0;
 int minValue = 0;
 int maxValue = 0;
 ValueSaveFn saveFn = nullptr;
+bool wholeUnits = false;
 unsigned long lastActivity = 0;
 
 void show(Adafruit_SSD1306& display) {
   char line[40];
-  snprintf(line, sizeof line, "%-6s %2d.%d\r\n^v adj, OK", title, value / 10, value % 10);
+  if (wholeUnits) {
+    snprintf(line, sizeof line, "%-6s %4d\r\n^v adj, OK", title, value);
+  } else {
+    snprintf(line, sizeof line, "%-6s %2d.%d\r\n^v adj, OK", title, value / 10, value % 10);
+  }
   DisplayMessage(display, String(line));
 }
 
@@ -30,8 +35,9 @@ void show(Adafruit_SSD1306& display) {
 bool ValueEditActive() { return active; }
 
 void ValueEditStart(Adafruit_SSD1306& display, const char* newTitle, int tenths, int minTenths,
-                    int maxTenths, ValueSaveFn onSave) {
+                    int maxTenths, ValueSaveFn onSave, bool whole) {
   title = newTitle;
+  wholeUnits = whole;
   minValue = minTenths;
   maxValue = maxTenths;
   value = tenths < minTenths ? minTenths : (tenths > maxTenths ? maxTenths : tenths);

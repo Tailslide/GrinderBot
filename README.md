@@ -15,12 +15,13 @@ An OK touch that overlaps a touch on another pad is ignored, and a grind starts 
 
 While grinding, **touching any pad stops it** (one beep). The top line shows the dose, then progress, then the result (e.g. `Done 18.1 (+0.1)  14.3s`); the weight is in large digits below. Two beeps: the grind is done. Three: a safety stop.
 
-**Menu** (hold ≡): Calibrate · Servo pos · Dose 1 · Dose 2 · Offset 1 · Offset 2 · Network.
+**Menu** (hold ≡): Calibrate · Servo pos · Dose 1 · Dose 2 · Offset 1 · Offset 2 · Max time · Network.
 
 - **Calibrate:** empty the scale, OK, put on a known weight (100–1000 g, in 100 g steps; a container of water weighed on a kitchen scale works), OK, check the reading, OK to save.
 - **Servo pos:** set the rest position (just clear of the manual button) and the press position (holding it down). The grinder runs while the press position is held, so unplug it or keep a cup under it.
-- **Dose 1 / Dose 2:** 1.0–99.9 g. Defaults 9.0 and 18.0 g.
+- **Dose 1 / Dose 2:** 1.0–99.9 g. Defaults 16.7 and 15.3 g (`include/config.h`).
 - **Offset 1 / Offset 2:** how far short of the target the button is released, to allow for grounds still falling and the motor spinning down. Each dose has its own, so the two presets can use different beans that grind at different rates. It's learned: after each normal grind of that dose it moves halfway towards the miss, so it should settle within a few grinds. Set it by hand here if you like.
+- **Max time:** the longest the button is ever held, in seconds (default 120). Raise it for a slow grinder or a big dose.
 - **Network:** Wi-Fi and MQTT status, and the grind count.
 
 ### Safety stops
@@ -29,13 +30,15 @@ The servo lets go of the button if:
 - the weight hasn't risen 0.3 g in 5 s (empty hopper, clog)
 - the weight drops 5 g below its peak (cup lifted)
 - the load cell stops sending readings for 1 s
-- the button has been held 60 s
+- the button has been held for the max time (Menu → Max time, 120 s by default)
 
 The SAMD21 watchdog also runs with a 2 s period whenever the servo isn't at rest: if the firmware hangs mid-grind, the board resets and the servo parks first thing on boot. The rest of the time it runs with a 16 s period, which only catches real lock-ups (a wedged Wi-Fi module, an unplugged HX711 mid-calibration). The limits are constants at the top of `include/grind.h`.
 
 ### After uploading new firmware
 
-Uploading wipes the saved settings (FlashStorage lives in the program flash): calibration, servo positions, doses, the learned offsets and the grind count. Put your calibration factor in `DEFAULT_CAL_FACTOR` (`include/loadcell.h`; the panel calibration prints it over serial) so readings stay in grams. Set the servo positions again from the menu.
+Uploading wipes the saved settings (FlashStorage lives in the program flash): calibration, servo positions, doses, the learned offsets, the max time and the grind count. The values it starts from after an upload are in `include/config.h`: calibration factor, servo positions, the two doses, max time, starting offset and the no-flow time.
+
+To use your own values without editing that file, copy `include/config_local.example.h` to `include/config_local.h` and uncomment what you want to change. `config_local.h` is git-ignored, so your settings stay on your computer and don't clash with updates. Useful values to copy in: the calibration factor (printed over serial when a panel calibration is saved) and the servo positions (Menu → Servo pos shows them).
 
 ## Home Assistant (optional)
 

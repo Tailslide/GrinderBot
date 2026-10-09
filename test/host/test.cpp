@@ -255,7 +255,7 @@ int main() {
   CHECK(GrindLastRecord().result == GrindResult::ScaleError); CHECK(status() == "Scale error");
   dataOn = true; idle(1000);
 
-  // --- Never holds the button longer than GRIND_MAX_MS ---
+  // --- Never holds the button longer than the max time (60 s in the tests) ---
   flowGps = 0.1f;  // still rising, so not a stall
   CHECK(grindOnce() == 0);
   CHECK(GrindLastRecord().result == GrindResult::MaxTime);
@@ -295,9 +295,10 @@ int main() {
   touch(2, 100); CHECK(lastScreen == ">Dose 1\r\n Dose 2");
   touch(2, 100); touch(2, 100); CHECK(lastScreen == ">Offset 1\r\n Offset 2");
   touch(2, 100); CHECK(lastScreen == " Offset 1\r\n>Offset 2");
-  touch(2, 100); CHECK(lastScreen == ">Network");
+  touch(2, 100); CHECK(lastScreen == ">Max time\r\n Network");
+  touch(2, 100); CHECK(lastScreen == " Max time\r\n>Network");
   touch(2, 100); CHECK(lastScreen == ">Calibrate\r\n Servo pos");
-  touch(1, 100); CHECK(lastScreen == ">Network");
+  touch(1, 100); CHECK(lastScreen == " Max time\r\n>Network");
   touch(0, 100); idle(50); CHECK(last == UiAction::ShowWeight); CHECK(lc.tares == tares + 1);
 
   // --- Dose 1 from the menu ---
@@ -334,6 +335,20 @@ int main() {
   touch(1, 100); touch(3, 100);
   CHECK(fabsf(GrindOffsetG(2) - (shown + 1) / 10.0f) < 0.001f);
   CHECK(GrindOffsetG(1) == OFFSET_DEFAULT_G);
+
+  // --- Max time from the menu, in whole seconds ---
+  CHECK(GrindMaxS() == GRIND_MAX_DEFAULT_S);
+  touch(0, 2100); for (int i = 0; i < 6; i++) touch(2, 100); touch(3, 100);
+  CHECK(lastScreen == "Max s    60\r\n^v adj, OK");
+  touch(1, 100); touch(1, 100); CHECK(lastScreen == "Max s    62\r\n^v adj, OK");
+  touch(3, 100); CHECK(lastScreen == "Saved"); CHECK(GrindMaxS() == 62); CHECK(settings.grindMaxS == 62);
+  flowGps = 0.1f;
+  CHECK(grindOnce() == 0);
+  CHECK(GrindLastRecord().result == GrindResult::MaxTime);
+  CHECK(GrindLastRecord().seconds >= 62.0f && GrindLastRecord().seconds < 62.2f);
+  flowGps = 1.2f;
+  GrindSetMaxS(5); CHECK(GrindMaxS() == GRIND_MAX_MIN_S);  // clamped
+  GrindSetMaxS(GRIND_MAX_DEFAULT_S);
 
   // --- Dose 1 learns its own offset (different beans: a faster grind) ---
   float offset2 = GrindOffsetG(2);
@@ -420,6 +435,7 @@ int main() {
   CHECK(GrindDoseDg(1) == 93 && GrindDoseDg(2) == 186 && GrindSelectedDose() == 2);
   CHECK(fabsf(GrindOffsetG(2) - settings.offsetCg[1] / 100.0f) < 0.001f);
   CHECK(fabsf(GrindOffsetG(1) - offset1) < 0.006f);
+  CHECK(GrindMaxS() == GRIND_MAX_DEFAULT_S);
 
   std::cout << "all grind / menu / settings checks passed (" << finished << " grinds, beeps=" << beeps << ")\n";
   return 0;

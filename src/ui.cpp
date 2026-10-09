@@ -15,9 +15,9 @@
 namespace {
 
 enum MenuItem { ITEM_CALIBRATE, ITEM_SERVO, ITEM_DOSE1, ITEM_DOSE2, ITEM_OFFSET1, ITEM_OFFSET2,
-                ITEM_NETWORK, MENU_COUNT };
-const char* const MENU_ITEMS[MENU_COUNT] = {"Calibrate", "Servo pos", "Dose 1",  "Dose 2",
-                                            "Offset 1",  "Offset 2",  "Network"};
+                ITEM_MAX_TIME, ITEM_NETWORK, MENU_COUNT };
+const char* const MENU_ITEMS[MENU_COUNT] = {"Calibrate", "Servo pos", "Dose 1",   "Dose 2",
+                                            "Offset 1",  "Offset 2",  "Max time", "Network"};
 
 const unsigned long INFO_REFRESH_MS = 1000;
 const unsigned long INFO_TIMEOUT_MS = 30000;
@@ -57,6 +57,7 @@ void saveDose2(int tenths) { GrindSetDoseDg(2, tenths); }
 void saveOffset(int n, int tenths) {
   if (tenths != (int)lroundf(GrindOffsetG(n) * 10.0f)) GrindSetOffsetG(n, tenths / 10.0f);
 }
+void saveMaxTime(int s) { GrindSetMaxS(s); }
 void saveOffset1(int tenths) { saveOffset(1, tenths); }
 void saveOffset2(int tenths) { saveOffset(2, tenths); }
 
@@ -78,6 +79,9 @@ void openItem(HX711_ADC& LoadCell, Adafruit_SSD1306& display, int item) {
     case ITEM_DOSE2: editDose(display, 2); break;
     case ITEM_OFFSET1: editOffset(display, 1); break;
     case ITEM_OFFSET2: editOffset(display, 2); break;
+    case ITEM_MAX_TIME:
+      ValueEditStart(display, "Max s", GrindMaxS(), GRIND_MAX_MIN_S, GRIND_MAX_MAX_S, saveMaxTime, true);
+      break;
     case ITEM_NETWORK:
       infoOpen = true;
       infoOpened = millis();

@@ -23,6 +23,7 @@ int doseDg[3] = {0, DOSE1_DEFAULT_DG, DOSE2_DEFAULT_DG};
 float offsetG[3] = {0.0f, OFFSET_DEFAULT_G, OFFSET_DEFAULT_G};  // [1], [2] used
 bool offsetIsSet[3] = {false, false, false};
 int grindDose = 1;  // the dose being ground (its preset and its offset)
+int maxS = GRIND_MAX_DEFAULT_S;  // longest the button is held (Menu -> Max time)
 
 float targetG = 0;
 unsigned long stateSince = 0;
@@ -57,6 +58,7 @@ void saveGrindSettings() {
   settings.dose1Dg = doseDg[1];
   settings.dose2Dg = doseDg[2];
   settings.selectedDose = selected;
+  settings.grindMaxS = (uint16_t)maxS;
   for (int n = 1; n <= 2; n++) {
     settings.offsetSet[n - 1] = offsetIsSet[n] ? 1 : 0;
     settings.offsetCg[n - 1] = (int16_t)lroundf(offsetG[n] * 100.0f);
@@ -151,6 +153,7 @@ void GrindBegin(bool ok) {
   if (settings.dose1Dg >= DOSE_MIN_DG && settings.dose1Dg <= DOSE_MAX_DG) doseDg[1] = settings.dose1Dg;
   if (settings.dose2Dg >= DOSE_MIN_DG && settings.dose2Dg <= DOSE_MAX_DG) doseDg[2] = settings.dose2Dg;
   if (settings.selectedDose == 1 || settings.selectedDose == 2) selected = settings.selectedDose;
+  if (settings.grindMaxS >= GRIND_MAX_MIN_S && settings.grindMaxS <= GRIND_MAX_MAX_S) maxS = settings.grindMaxS;
   for (int n = 1; n <= 2; n++) {
     if (settings.offsetSet[n - 1]) {
       offsetG[n] = clampF(settings.offsetCg[n - 1] / 100.0f, 0.0f, OFFSET_MAX_G);
@@ -245,7 +248,7 @@ bool GrindUpdate(HX711_ADC& lc, bool newData, float weight, bool tareDone) {
         release(GrindResult::ScaleError);
         break;
       }
-      if (now - pressStart >= GRIND_MAX_MS) {
+      if (now - pressStart >= (unsigned long)maxS * 1000UL) {
         release(GrindResult::MaxTime);
         break;
       }
@@ -313,6 +316,15 @@ void GrindSetDoseDg(int n, int dg) {
   if (dg < DOSE_MIN_DG) dg = DOSE_MIN_DG;
   if (dg > DOSE_MAX_DG) dg = DOSE_MAX_DG;
   doseDg[n] = dg;
+  saveGrindSettings();
+}
+
+int GrindMaxS() { return maxS; }
+
+void GrindSetMaxS(int s) {
+  if (s < GRIND_MAX_MIN_S) s = GRIND_MAX_MIN_S;
+  if (s > GRIND_MAX_MAX_S) s = GRIND_MAX_MAX_S;
+  maxS = s;
   saveGrindSettings();
 }
 
