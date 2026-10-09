@@ -5,3 +5,6 @@
 // Reserve a portion of flash memory to store a settings and call it "flash_store"
 extern FlashStorageClass<FlashSettings> flash_store;
 extern FlashSettings settings;
+
+// Write the current settings to flash
+void SaveSettings();
